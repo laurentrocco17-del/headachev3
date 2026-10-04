@@ -1,0 +1,2812 @@
+local PC = {}
+PC.Players = game:GetService("Players")
+PC.LP = PC.Players.LocalPlayer
+PC.UIS = game:GetService("UserInputService")
+PC.RS = game:GetService("RunService")
+PC.Stats = game:GetService("Stats")
+PC.Lighting = game:GetService("Lighting")
+
+PC.CONFIG_DIR = "phantomcore_configs"
+PC.AUTOLOAD_MARKER = "phantomcore_autoload.txt"
+PC.DEFAULT_SOUND = "rbxasset://sounds/electronicpingshort.wav"
+
+PC.T = {
+    bg = Color3.fromRGB(0, 0, 0),
+    panel = Color3.fromRGB(10, 10, 10),
+    panel2 = Color3.fromRGB(20, 20, 20),
+    border = Color3.fromRGB(60, 60, 60),
+    text = Color3.fromRGB(255, 255, 255),
+    dim = Color3.fromRGB(180, 180, 180),
+    faint = Color3.fromRGB(120, 120, 120),
+    accent = Color3.fromRGB(230, 230, 230),
+    ok = Color3.fromRGB(80, 255, 130),
+    warn = Color3.fromRGB(255, 180, 60),
+    danger = Color3.fromRGB(255, 80, 80),
+}
+
+PC.cfg = {
+    teleEnabled = false,
+    teleDelay = 0.5,
+    selected = nil,
+    useAll = true,
+    voidEnabled = false,
+    voidForce = 500000,
+    voidInterval = 0.1,
+    holdTime = 0.3,
+    espEnabled = false,
+    espColor = 1,
+    hitSound = false,
+    soundId = "",
+    fullbright = false,
+    fpsOverlay = true,
+    noclip = false,
+    autoMelee = false,
+    rapidFire = false,
+    rapidAttack = false,
+    auraEnabled = false,
+    auraColor = 1,
+    cameraFollow = false,
+    autoLoad = false,
+    activeConfig = "",
+    killFeed = true,
+    combatTimer = true,
+    voidTrack = true,
+    suspicious = true,
+    notifications = true,
+    holding = false,
+    holdTarget = nil,
+    teleKey = Enum.KeyCode.L,
+    voidKey = Enum.KeyCode.V,
+    bgEnabled = false,
+    bgOffsetBack = 3,
+    bgOffsetUp = 1.5,
+    bgIgnoreTeam = false,
+    bgLockCamera = false,
+    flyEnabled = false,
+    flySpeed = 60,
+    flyKey = Enum.KeyCode.F,
+    antiAim = false,
+    antiAimDepth = 30,
+}
+
+PC.colors = {
+    Color3.fromRGB(255, 255, 255),
+    Color3.fromRGB(255, 60, 60),
+    Color3.fromRGB(60, 255, 120),
+    Color3.fromRGB(80, 160, 255),
+    Color3.fromRGB(255, 220, 60),
+    Color3.fromRGB(255, 80, 220),
+}
+PC.colorNames = { "WHITE", "RED", "GREEN", "BLUE", "YELLOW", "PINK", "RAINBOW" }
+PC.RAINBOW_IDX = 7
+PC.rainbowHue = 0
+PC.meleeKeywords = { "chainsaw", "sword", "knife", "axe", "bat", "hammer", "melee", "blade", "katana", "fist", "punch" }
+
+PC.espGui = Instance.new("ScreenGui")
+PC.espGui.Name = "PC_ESP"
+PC.espGui.ResetOnSpawn = false
+PC.espGui.IgnoreGuiInset = true
+PC.espGui.DisplayOrder = 999998
+PC.espGui.Parent = PC.LP:WaitForChild("PlayerGui")
+
+PC.fpsGui = Instance.new("ScreenGui")
+PC.fpsGui.Name = "PC_FPS"
+PC.fpsGui.ResetOnSpawn = false
+PC.fpsGui.IgnoreGuiInset = true
+PC.fpsGui.DisplayOrder = 999997
+PC.fpsGui.Parent = PC.LP:WaitForChild("PlayerGui")
+
+PC.gui = Instance.new("ScreenGui")
+PC.gui.Name = "PHANTOMCORE"
+PC.gui.ResetOnSpawn = false
+PC.gui.IgnoreGuiInset = true
+PC.gui.DisplayOrder = 999999
+PC.gui.Parent = PC.LP:WaitForChild("PlayerGui")
+
+PC.highlights = {}
+PC.players = {}
+PC.playerIndex = 1
+PC.lastTele = tick()
+PC.lastCycle = tick()
+PC.rng = Random.new()
+PC.savedLighting = nil
+PC.awaitingBind = nil
+PC.voidThread = nil
+PC.comboThread = nil
+PC.noclipConn = nil
+PC.autoMeleeThread = nil
+PC.rapidFireThread = nil
+PC.rapidAttackConn = nil
+PC.bgConn = nil
+PC.bgLockedTarget = nil
+PC.mouseDown = false
+PC.auraHighlight = nil
+PC.auraLight = nil
+PC.camFollowTarget = nil
+PC.lastSeen = {}
+PC.lastVel = {}
+PC.combatStart = tick()
+PC.inCombat = false
+PC.lastDamage = 0
+PC.lastThreatToast = 0
+PC.flyBV = nil
+PC.flyBG = nil
+PC.flyConn = nil
+PC.antiAimConn = nil
+PC.antiAimOrigin = nil
+
+do
+    local Players = PC.Players
+    local LP = PC.LP
+    local UIS = PC.UIS
+    local RS = PC.RS
+    local Stats = PC.Stats
+    local Lighting = PC.Lighting
+    local cfg = PC.cfg
+    local T = PC.T
+
+    local function refreshPlayers()
+        PC.players = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP then table.insert(PC.players, p) end
+        end
+    end
+    PC.refreshPlayers = refreshPlayers
+
+    local function getRoot()
+        local c = LP.Character
+        if c and c:FindFirstChild("HumanoidRootPart") and c:FindFirstChild("Humanoid") and c.Humanoid.Health > 0 then
+            return c.HumanoidRootPart
+        end
+    end
+    PC.getRoot = getRoot
+
+    local function teleportTo(p)
+        local r = getRoot()
+        if not r then return false end
+        local tc = p.Character
+        if tc and tc:FindFirstChild("Head") then
+            r.CFrame = CFrame.new(tc.Head.Position + Vector3.new(0, 1, 0))
+            return true
+        end
+        return false
+    end
+    PC.teleportTo = teleportTo
+
+    local function nearestPlayer()
+        local r = getRoot()
+        if not r then return nil end
+        local myPos = r.Position
+        local near, dist = nil, math.huge
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP then
+                local c = p.Character
+                if c then
+                    local h = c:FindFirstChild("Head")
+                    if h then
+                        local d = (h.Position - myPos).Magnitude
+                        if d < dist then dist = d near = p end
+                    end
+                end
+            end
+        end
+        return near
+    end
+    PC.nearestPlayer = nearestPlayer
+
+    local function curColor()
+        if cfg.espColor == PC.RAINBOW_IDX then
+            return Color3.fromHSV(PC.rainbowHue, 1, 1)
+        end
+        return PC.colors[cfg.espColor]
+    end
+    PC.curColor = curColor
+
+    local function curAuraColor()
+        if cfg.auraColor == PC.RAINBOW_IDX then
+            return Color3.fromHSV((PC.rainbowHue + 0.5) % 1, 1, 1)
+        end
+        return PC.colors[cfg.auraColor]
+    end
+    PC.curAuraColor = curAuraColor
+
+    local function mkBtn(parent, y, w, xOff, txt, accent)
+        local b = Instance.new("TextButton")
+        b.Parent = parent
+        b.Size = UDim2.new(w, -4, 0, 26)
+        b.Position = UDim2.new(xOff, 2, 0, y)
+        b.BackgroundColor3 = accent and T.accent or T.panel2
+        b.Text = txt
+        b.TextColor3 = accent and T.bg or T.text
+        b.TextSize = 11
+        b.Font = Enum.Font.GothamBold
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = false
+        b.ZIndex = 102
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
+        local s = Instance.new("UIStroke", b)
+        s.Color = T.border
+        s.Thickness = 1
+        return b
+    end
+    PC.mkBtn = mkBtn
+
+    local function mkHeader(parent, y, txt)
+        local h = Instance.new("Frame")
+        h.Parent = parent
+        h.Size = UDim2.new(1, -8, 0, 22)
+        h.Position = UDim2.new(0, 4, 0, y)
+        h.BackgroundColor3 = T.panel
+        h.BorderSizePixel = 0
+        h.ZIndex = 102
+        Instance.new("UICorner", h).CornerRadius = UDim.new(0, 3)
+        local hs = Instance.new("UIStroke", h)
+        hs.Color = T.border
+        hs.Thickness = 1
+        local ht = Instance.new("TextLabel")
+        ht.Parent = h
+        ht.Size = UDim2.new(1, -16, 1, 0)
+        ht.Position = UDim2.new(0, 8, 0, 0)
+        ht.BackgroundTransparency = 1
+        ht.Text = txt
+        ht.TextColor3 = T.dim
+        ht.TextSize = 10
+        ht.Font = Enum.Font.GothamBold
+        ht.TextXAlignment = Enum.TextXAlignment.Left
+        ht.ZIndex = 103
+    end
+    PC.mkHeader = mkHeader
+
+    local function mkSlider(parent, y, title, desc, defVal, dispFn, applyFn)
+        local card = Instance.new("Frame")
+        card.Parent = parent
+        card.Size = UDim2.new(1, -8, 0, 70)
+        card.Position = UDim2.new(0, 4, 0, y)
+        card.BackgroundColor3 = T.panel
+        card.BorderSizePixel = 0
+        card.ZIndex = 102
+        Instance.new("UICorner", card).CornerRadius = UDim.new(0, 3)
+        local cs = Instance.new("UIStroke", card)
+        cs.Color = T.border
+        cs.Thickness = 1
+
+        local lbl = Instance.new("TextLabel")
+        lbl.Parent = card
+        lbl.Size = UDim2.new(1, -16, 0, 14)
+        lbl.Position = UDim2.new(0, 8, 0, 8)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = title
+        lbl.TextColor3 = T.dim
+        lbl.TextSize = 9
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.ZIndex = 103
+
+        local val = Instance.new("TextLabel")
+        val.Parent = card
+        val.Size = UDim2.new(1, -16, 0, 14)
+        val.Position = UDim2.new(0, 8, 0, 8)
+        val.BackgroundTransparency = 1
+        val.Text = dispFn(defVal)
+        val.TextColor3 = T.text
+        val.TextSize = 9
+        val.Font = Enum.Font.GothamBold
+        val.TextXAlignment = Enum.TextXAlignment.Right
+        val.ZIndex = 103
+
+        local descL = Instance.new("TextLabel")
+        descL.Parent = card
+        descL.Size = UDim2.new(1, -16, 0, 12)
+        descL.Position = UDim2.new(0, 8, 0, 22)
+        descL.BackgroundTransparency = 1
+        descL.Text = desc
+        descL.TextColor3 = T.faint
+        descL.TextSize = 9
+        descL.Font = Enum.Font.Gotham
+        descL.TextXAlignment = Enum.TextXAlignment.Left
+        descL.ZIndex = 103
+
+        local track = Instance.new("Frame")
+        track.Parent = card
+        track.Size = UDim2.new(1, -32, 0, 6)
+        track.Position = UDim2.new(0, 16, 0, 46)
+        track.BackgroundColor3 = T.panel2
+        track.BorderSizePixel = 0
+        track.ZIndex = 103
+        Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+        local trs = Instance.new("UIStroke", track)
+        trs.Color = T.border
+        trs.Thickness = 1
+
+        local fill = Instance.new("Frame")
+        fill.Parent = track
+        fill.Size = UDim2.new(0, 0, 1, 0)
+        fill.BackgroundColor3 = T.text
+        fill.BorderSizePixel = 0
+        fill.ZIndex = 104
+        Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+        local drag = false
+
+        local function update(input)
+            local bp = track.AbsolutePosition.X
+            local bs = track.AbsoluteSize.X
+            local pos = math.clamp((input.Position.X - bp) / bs, 0, 1)
+            fill.Size = UDim2.new(pos, 0, 1, 0)
+            applyFn(pos)
+            val.Text = dispFn(pos)
+        end
+
+        track.InputBegan:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+                drag = true
+                update(i)
+            end
+        end)
+        track.InputEnded:Connect(function(i)
+            if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+                drag = false
+            end
+        end)
+        UIS.InputChanged:Connect(function(i)
+            if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+                update(i)
+            end
+        end)
+    end
+    PC.mkSlider = mkSlider
+
+    PC.fpsFrame = Instance.new("Frame")
+    PC.fpsFrame.Size = UDim2.new(0, 120, 0, 44)
+    PC.fpsFrame.Position = UDim2.new(0, 8, 0, 8)
+    PC.fpsFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    PC.fpsFrame.BackgroundTransparency = 0.35
+    PC.fpsFrame.BorderSizePixel = 0
+    PC.fpsFrame.Parent = PC.fpsGui
+    Instance.new("UICorner", PC.fpsFrame).CornerRadius = UDim.new(0, 6)
+
+    PC.fpsText = Instance.new("TextLabel")
+    PC.fpsText.Size = UDim2.new(1, -12, 0, 18)
+    PC.fpsText.Position = UDim2.new(0, 6, 0, 4)
+    PC.fpsText.BackgroundTransparency = 1
+    PC.fpsText.Text = "FPS: --"
+    PC.fpsText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PC.fpsText.TextSize = 11
+    PC.fpsText.Font = Enum.Font.GothamBold
+    PC.fpsText.TextXAlignment = Enum.TextXAlignment.Left
+    PC.fpsText.Parent = PC.fpsFrame
+
+    PC.pingText = Instance.new("TextLabel")
+    PC.pingText.Size = UDim2.new(1, -12, 0, 18)
+    PC.pingText.Position = UDim2.new(0, 6, 0, 22)
+    PC.pingText.BackgroundTransparency = 1
+    PC.pingText.Text = "PING: --"
+    PC.pingText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PC.pingText.TextSize = 11
+    PC.pingText.Font = Enum.Font.GothamBold
+    PC.pingText.TextXAlignment = Enum.TextXAlignment.Left
+    PC.pingText.Parent = PC.fpsFrame
+
+    PC.combatLabel = Instance.new("TextLabel")
+    PC.combatLabel.Size = UDim2.new(0, 120, 0, 18)
+    PC.combatLabel.Position = UDim2.new(0, 8, 0, 56)
+    PC.combatLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    PC.combatLabel.BackgroundTransparency = 0.35
+    PC.combatLabel.BorderSizePixel = 0
+    PC.combatLabel.Text = "FIGHT: --"
+    PC.combatLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+    PC.combatLabel.TextSize = 11
+    PC.combatLabel.Font = Enum.Font.GothamBold
+    PC.combatLabel.TextXAlignment = Enum.TextXAlignment.Center
+    PC.combatLabel.Parent = PC.fpsGui
+    Instance.new("UICorner", PC.combatLabel).CornerRadius = UDim.new(0, 6)
+
+    PC.killFeedFrame = Instance.new("Frame")
+    PC.killFeedFrame.Size = UDim2.new(0, 240, 0, 130)
+    PC.killFeedFrame.Position = UDim2.new(1, -248, 0, 8)
+    PC.killFeedFrame.BackgroundTransparency = 1
+    PC.killFeedFrame.Parent = PC.fpsGui
+    local kfLayout = Instance.new("UIListLayout", PC.killFeedFrame)
+    kfLayout.Padding = UDim.new(0, 3)
+    kfLayout.VerticalAlignment = Enum.VerticalAlignment.Top
+    kfLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    PC.toastFrame = Instance.new("Frame")
+    PC.toastFrame.Size = UDim2.new(0, 240, 0, 30)
+    PC.toastFrame.Position = UDim2.new(0.5, -120, 1, -50)
+    PC.toastFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    PC.toastFrame.BackgroundTransparency = 0.2
+    PC.toastFrame.BorderSizePixel = 0
+    PC.toastFrame.Visible = false
+    PC.toastFrame.Parent = PC.gui
+    Instance.new("UICorner", PC.toastFrame).CornerRadius = UDim.new(0, 6)
+    PC.toastStroke = Instance.new("UIStroke", PC.toastFrame)
+    PC.toastStroke.Color = T.border
+    PC.toastStroke.Thickness = 1
+
+    PC.toastText = Instance.new("TextLabel")
+    PC.toastText.Parent = PC.toastFrame
+    PC.toastText.Size = UDim2.new(1, -12, 1, 0)
+    PC.toastText.Position = UDim2.new(0, 6, 0, 0)
+    PC.toastText.BackgroundTransparency = 1
+    PC.toastText.Text = ""
+    PC.toastText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PC.toastText.TextSize = 12
+    PC.toastText.Font = Enum.Font.GothamBold
+    PC.toastText.TextXAlignment = Enum.TextXAlignment.Center
+
+    PC.toastThread = nil
+    local function toast(msg, color)
+        if not cfg.notifications then return end
+        PC.toastText.Text = msg
+        PC.toastText.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+        PC.toastFrame.Visible = true
+        PC.toastFrame.BackgroundTransparency = 0.2
+        PC.toastStroke.Color = color or T.border
+        if PC.toastThread then task.cancel(PC.toastThread) end
+        PC.toastThread = task.spawn(function()
+            task.wait(1.5)
+            PC.toastFrame.Visible = false
+        end)
+    end
+    PC.toast = toast
+
+    PC.hitSound = Instance.new("Sound")
+    PC.hitSound.SoundId = PC.DEFAULT_SOUND
+    PC.hitSound.Volume = 0.5
+    PC.hitSound.Parent = game:GetService("SoundService")
+
+    local function isSuspicious(p)
+        if not cfg.suspicious then return false end
+        local c = p.Character
+        if not c then return false end
+        local root = c:FindFirstChild("HumanoidRootPart")
+        if not root then return false end
+        local last = PC.lastVel[p]
+        local now = root.Velocity.Magnitude
+        PC.lastVel[p] = now
+        if last and last > 500 and now > 500 then
+            local diff = math.abs(now - last)
+            if diff > 200 then return true end
+        end
+        local lastPos = PC.lastSeen[p]
+        if lastPos then
+            local d = (root.Position - lastPos).Magnitude
+            if d > 200 then
+                PC.lastSeen[p] = root.Position
+                return true
+            end
+        end
+        PC.lastSeen[p] = root.Position
+        return false
+    end
+    PC.isSuspicious = isSuspicious
+
+    PC.orb = Instance.new("TextButton")
+    PC.orb.Parent = PC.gui
+    PC.orb.Size = UDim2.new(0, 36, 0, 36)
+    PC.orb.Position = UDim2.new(0, 14, 0.5, -18)
+    PC.orb.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    PC.orb.Text = ""
+    PC.orb.BorderSizePixel = 0
+    PC.orb.Draggable = true
+    PC.orb.AutoButtonColor = false
+    PC.orb.ZIndex = 250
+    Instance.new("UICorner", PC.orb).CornerRadius = UDim.new(0, 8)
+    local orbStroke = Instance.new("UIStroke", PC.orb)
+    orbStroke.Color = T.border
+    orbStroke.Thickness = 1
+
+    PC.pcLabel = Instance.new("TextLabel")
+    PC.pcLabel.Parent = PC.orb
+    PC.pcLabel.Size = UDim2.new(1, 0, 1, 0)
+    PC.pcLabel.BackgroundTransparency = 1
+    PC.pcLabel.Text = "PC"
+    PC.pcLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    PC.pcLabel.TextSize = 15
+    PC.pcLabel.Font = Enum.Font.GothamBold
+    PC.pcLabel.ZIndex = 251
+
+    PC.slash = Instance.new("Frame")
+    PC.slash.Parent = PC.orb
+    PC.slash.Size = UDim2.new(1, 4, 0, 2)
+    PC.slash.Position = UDim2.new(0, -2, 0.5, -1)
+    PC.slash.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    PC.slash.BorderSizePixel = 0
+    PC.slash.Rotation = 45
+    PC.slash.ZIndex = 252
+
+    PC.win = Instance.new("Frame")
+    PC.win.Parent = PC.gui
+    PC.win.Size = UDim2.new(0, 500, 0, 460)
+    PC.win.Position = UDim2.new(0.5, -250, 0.5, -230)
+    PC.win.BackgroundColor3 = T.bg
+    PC.win.BorderSizePixel = 0
+    PC.win.Draggable = true
+    PC.win.ClipsDescendants = true
+    PC.win.Visible = false
+    PC.win.ZIndex = 100
+    Instance.new("UICorner", PC.win).CornerRadius = UDim.new(0, 4)
+    local winStroke = Instance.new("UIStroke", PC.win)
+    winStroke.Color = T.border
+    winStroke.Thickness = 1
+
+    PC.tbar = Instance.new("Frame")
+    PC.tbar.Parent = PC.win
+    PC.tbar.Size = UDim2.new(1, 0, 0, 26)
+    PC.tbar.BackgroundColor3 = T.panel
+    PC.tbar.BorderSizePixel = 0
+    PC.tbar.ZIndex = 101
+    Instance.new("UICorner", PC.tbar).CornerRadius = UDim.new(0, 4)
+
+    PC.ttl = Instance.new("TextLabel")
+    PC.ttl.Parent = PC.tbar
+    PC.ttl.Size = UDim2.new(1, -60, 1, 0)
+    PC.ttl.Position = UDim2.new(0, 10, 0, 0)
+    PC.ttl.BackgroundTransparency = 1
+    PC.ttl.Text = "PHANTOMCORE"
+    PC.ttl.TextColor3 = T.text
+    PC.ttl.TextSize = 12
+    PC.ttl.Font = Enum.Font.GothamBold
+    PC.ttl.TextXAlignment = Enum.TextXAlignment.Left
+    PC.ttl.ZIndex = 102
+
+    PC.cls = Instance.new("TextButton")
+    PC.cls.Parent = PC.tbar
+    PC.cls.Size = UDim2.new(0, 20, 0, 20)
+    PC.cls.Position = UDim2.new(1, -24, 0, 3)
+    PC.cls.BackgroundColor3 = T.panel2
+    PC.cls.Text = "X"
+    PC.cls.TextColor3 = T.text
+    PC.cls.TextSize = 11
+    PC.cls.Font = Enum.Font.GothamBold
+    PC.cls.BorderSizePixel = 0
+    PC.cls.AutoButtonColor = false
+    PC.cls.ZIndex = 102
+    Instance.new("UICorner", PC.cls).CornerRadius = UDim.new(0, 4)
+
+    PC.side = Instance.new("Frame")
+    PC.side.Parent = PC.win
+    PC.side.Size = UDim2.new(0, 108, 1, -26)
+    PC.side.Position = UDim2.new(0, 0, 0, 26)
+    PC.side.BackgroundColor3 = T.panel
+    PC.side.BorderSizePixel = 0
+    PC.side.ZIndex = 101
+
+    PC.sl = Instance.new("Frame")
+    PC.sl.Parent = PC.side
+    PC.sl.Size = UDim2.new(0, 1, 1, 0)
+    PC.sl.Position = UDim2.new(1, -1, 0, 0)
+    PC.sl.BackgroundColor3 = T.border
+    PC.sl.BorderSizePixel = 0
+    PC.sl.ZIndex = 102
+
+    local function tabBtn(y, txt)
+        local b = Instance.new("TextButton")
+        b.Parent = PC.side
+        b.Size = UDim2.new(1, -8, 0, 30)
+        b.Position = UDim2.new(0, 4, 0, y)
+        b.BackgroundColor3 = T.panel2
+        b.Text = txt
+        b.TextColor3 = T.dim
+        b.TextSize = 11
+        b.Font = Enum.Font.GothamBold
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = false
+        b.ZIndex = 102
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
+        local s = Instance.new("UIStroke", b)
+        s.Color = T.border
+        s.Thickness = 1
+        return b
+    end
+
+    PC.tabRage = tabBtn(6, "RAGE")
+    PC.tabCombat = tabBtn(40, "COMBAT")
+    PC.tabVisual = tabBtn(74, "VISUAL")
+    PC.tabSettings = tabBtn(108, "SETTINGS")
+
+    PC.content = Instance.new("Frame")
+    PC.content.Parent = PC.win
+    PC.content.Size = UDim2.new(1, -108, 1, -26)
+    PC.content.Position = UDim2.new(0, 108, 0, 26)
+    PC.content.BackgroundTransparency = 1
+    PC.content.ZIndex = 101
+
+    local function newPage()
+        local p = Instance.new("Frame")
+        p.Parent = PC.content
+        p.Size = UDim2.new(1, 0, 1, 0)
+        p.BackgroundTransparency = 1
+        p.Visible = false
+        p.ZIndex = 101
+        return p
+    end
+
+    PC.pgRage = newPage()
+    PC.pgCombat = newPage()
+    PC.pgVisual = newPage()
+    PC.pgSettings = newPage()
+
+    PC.tabList = {
+        { btn = PC.tabRage, pg = PC.pgRage },
+        { btn = PC.tabCombat, pg = PC.pgCombat },
+        { btn = PC.tabVisual, pg = PC.pgVisual },
+        { btn = PC.tabSettings, pg = PC.pgSettings },
+    }
+
+    local function setTab(target)
+        for _, pair in ipairs(PC.tabList) do
+            if pair.btn == target then
+                pair.btn.BackgroundColor3 = T.accent
+                pair.btn.TextColor3 = T.bg
+                pair.pg.Visible = true
+            else
+                pair.btn.BackgroundColor3 = T.panel2
+                pair.btn.TextColor3 = T.dim
+                pair.pg.Visible = false
+            end
+        end
+    end
+    PC.setTab = setTab
+
+    PC.tabRage.MouseButton1Click:Connect(function() setTab(PC.tabRage) end)
+    PC.tabCombat.MouseButton1Click:Connect(function() setTab(PC.tabCombat) end)
+    PC.tabVisual.MouseButton1Click:Connect(function() setTab(PC.tabVisual) end)
+    PC.tabSettings.MouseButton1Click:Connect(function() setTab(PC.tabSettings) end)
+
+    PC.leftCol = Instance.new("Frame")
+    PC.leftCol.Parent = PC.pgRage
+    PC.leftCol.Size = UDim2.new(0.5, -8, 1, -8)
+    PC.leftCol.Position = UDim2.new(0, 4, 0, 4)
+    PC.leftCol.BackgroundTransparency = 1
+    PC.leftCol.ZIndex = 102
+
+    PC.rightCol = Instance.new("Frame")
+    PC.rightCol.Parent = PC.pgRage
+    PC.rightCol.Size = UDim2.new(0.5, -8, 1, -8)
+    PC.rightCol.Position = UDim2.new(0.5, 4, 0, 4)
+    PC.rightCol.BackgroundTransparency = 1
+    PC.rightCol.ZIndex = 102
+
+    mkHeader(PC.leftCol, 0, "PRESETS")
+    PC.presetRow = Instance.new("Frame")
+    PC.presetRow.Parent = PC.leftCol
+    PC.presetRow.Size = UDim2.new(1, -4, 0, 26)
+    PC.presetRow.Position = UDim2.new(0, 2, 0, 24)
+    PC.presetRow.BackgroundTransparency = 1
+    local presetLayout = Instance.new("UIListLayout", PC.presetRow)
+    presetLayout.FillDirection = Enum.FillDirection.Horizontal
+    presetLayout.Padding = UDim.new(0, 3)
+    presetLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    PC.btnAll = mkBtn(PC.leftCol, 56, 0.5, 0, "ALL", true)
+    PC.btnSel = mkBtn(PC.leftCol, 56, 0.5, 0.5, "SELECT", false)
+    PC.btnEnable = mkBtn(PC.leftCol, 86, 1, 0, "ENABLE TELEPORT", false)
+    PC.btnCycle = mkBtn(PC.leftCol, 116, 1, 0, "CYCLE NOW", false)
+
+    PC.statCard = Instance.new("Frame")
+    PC.statCard.Parent = PC.leftCol
+    PC.statCard.Size = UDim2.new(1, -4, 0, 40)
+    PC.statCard.Position = UDim2.new(0, 2, 0, 148)
+    PC.statCard.BackgroundColor3 = T.panel
+    PC.statCard.BorderSizePixel = 0
+    PC.statCard.ZIndex = 101
+    Instance.new("UICorner", PC.statCard).CornerRadius = UDim.new(0, 3)
+    local scs = Instance.new("UIStroke", PC.statCard)
+    scs.Color = T.border
+    scs.Thickness = 1
+
+    PC.statDot = Instance.new("Frame")
+    PC.statDot.Parent = PC.statCard
+    PC.statDot.Size = UDim2.new(0, 8, 0, 8)
+    PC.statDot.Position = UDim2.new(0, 10, 0, 10)
+    PC.statDot.BackgroundColor3 = T.text
+    PC.statDot.BorderSizePixel = 0
+    PC.statDot.ZIndex = 103
+    Instance.new("UICorner", PC.statDot).CornerRadius = UDim.new(1, 0)
+
+    PC.statLbl = Instance.new("TextLabel")
+    PC.statLbl.Parent = PC.statCard
+    PC.statLbl.Size = UDim2.new(1, -30, 0, 14)
+    PC.statLbl.Position = UDim2.new(0, 24, 0, 6)
+    PC.statLbl.BackgroundTransparency = 1
+    PC.statLbl.Text = "DISABLED"
+    PC.statLbl.TextColor3 = T.text
+    PC.statLbl.TextSize = 10
+    PC.statLbl.Font = Enum.Font.GothamBold
+    PC.statLbl.TextXAlignment = Enum.TextXAlignment.Left
+    PC.statLbl.ZIndex = 103
+
+    PC.statTgt = Instance.new("TextLabel")
+    PC.statTgt.Parent = PC.statCard
+    PC.statTgt.Size = UDim2.new(1, -20, 0, 14)
+    PC.statTgt.Position = UDim2.new(0, 10, 0, 22)
+    PC.statTgt.BackgroundTransparency = 1
+    PC.statTgt.Text = "no target"
+    PC.statTgt.TextColor3 = T.faint
+    PC.statTgt.TextSize = 9
+    PC.statTgt.Font = Enum.Font.Gotham
+    PC.statTgt.TextXAlignment = Enum.TextXAlignment.Left
+    PC.statTgt.ZIndex = 103
+
+    PC.spdLbl = Instance.new("TextLabel")
+    PC.spdLbl.Parent = PC.leftCol
+    PC.spdLbl.Size = UDim2.new(0.5, 0, 0, 14)
+    PC.spdLbl.Position = UDim2.new(0, 4, 0, 196)
+    PC.spdLbl.BackgroundTransparency = 1
+    PC.spdLbl.Text = "SPEED"
+    PC.spdLbl.TextColor3 = T.dim
+    PC.spdLbl.TextSize = 9
+    PC.spdLbl.Font = Enum.Font.GothamBold
+    PC.spdLbl.TextXAlignment = Enum.TextXAlignment.Left
+    PC.spdLbl.ZIndex = 102
+
+    PC.spdVal = Instance.new("TextLabel")
+    PC.spdVal.Parent = PC.leftCol
+    PC.spdVal.Size = UDim2.new(0.5, -6, 0, 14)
+    PC.spdVal.Position = UDim2.new(0.5, 2, 0, 196)
+    PC.spdVal.BackgroundTransparency = 1
+    PC.spdVal.Text = "0.5s"
+    PC.spdVal.TextColor3 = T.text
+    PC.spdVal.TextSize = 9
+    PC.spdVal.Font = Enum.Font.GothamBold
+    PC.spdVal.TextXAlignment = Enum.TextXAlignment.Right
+    PC.spdVal.ZIndex = 102
+
+    PC.spdTrack = Instance.new("Frame")
+    PC.spdTrack.Parent = PC.leftCol
+    PC.spdTrack.Size = UDim2.new(1, -4, 0, 6)
+    PC.spdTrack.Position = UDim2.new(0, 2, 0, 214)
+    PC.spdTrack.BackgroundColor3 = T.panel2
+    PC.spdTrack.BorderSizePixel = 0
+    PC.spdTrack.ZIndex = 102
+    Instance.new("UICorner", PC.spdTrack).CornerRadius = UDim.new(1, 0)
+    local sps = Instance.new("UIStroke", PC.spdTrack)
+    sps.Color = T.border
+    sps.Thickness = 1
+
+    PC.spdFill = Instance.new("Frame")
+    PC.spdFill.Parent = PC.spdTrack
+    PC.spdFill.Size = UDim2.new(0.2, 0, 1, 0)
+    PC.spdFill.BackgroundColor3 = T.text
+    PC.spdFill.BorderSizePixel = 0
+    PC.spdFill.ZIndex = 103
+    Instance.new("UICorner", PC.spdFill).CornerRadius = UDim.new(1, 0)
+
+    local spdDrag = false
+    local function updSpeed(input)
+        local bp = PC.spdTrack.AbsolutePosition.X
+        local bs = PC.spdTrack.AbsoluteSize.X
+        local pos = math.clamp((input.Position.X - bp) / bs, 0, 1)
+        local v = math.round((0.1 + pos * 1.9) * 10) / 10
+        cfg.teleDelay = v
+        PC.spdFill.Size = UDim2.new(pos, 0, 1, 0)
+        PC.spdVal.Text = string.format("%.1fs", v)
+    end
+    PC.spdTrack.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            spdDrag = true; updSpeed(i)
+        end
+    end)
+    PC.spdTrack.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            spdDrag = false
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if spdDrag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            updSpeed(i)
+        end
+    end)
+
+    PC.voidHead = Instance.new("Frame")
+    PC.voidHead.Parent = PC.leftCol
+    PC.voidHead.Size = UDim2.new(1, -4, 0, 22)
+    PC.voidHead.Position = UDim2.new(0, 2, 0, 236)
+    PC.voidHead.BackgroundColor3 = T.panel
+    PC.voidHead.BorderSizePixel = 0
+    PC.voidHead.ZIndex = 101
+    Instance.new("UICorner", PC.voidHead).CornerRadius = UDim.new(0, 3)
+    local vhs = Instance.new("UIStroke", PC.voidHead)
+    vhs.Color = T.border
+    vhs.Thickness = 1
+
+    PC.vhTxt = Instance.new("TextLabel")
+    PC.vhTxt.Parent = PC.voidHead
+    PC.vhTxt.Size = UDim2.new(0.6, 0, 1, 0)
+    PC.vhTxt.Position = UDim2.new(0, 8, 0, 0)
+    PC.vhTxt.BackgroundTransparency = 1
+    PC.vhTxt.Text = "VOID SPAM"
+    PC.vhTxt.TextColor3 = T.dim
+    PC.vhTxt.TextSize = 10
+    PC.vhTxt.Font = Enum.Font.GothamBold
+    PC.vhTxt.TextXAlignment = Enum.TextXAlignment.Left
+    PC.vhTxt.ZIndex = 102
+
+    PC.vStatus = Instance.new("TextLabel")
+    PC.vStatus.Parent = PC.voidHead
+    PC.vStatus.Size = UDim2.new(0.4, -8, 1, 0)
+    PC.vStatus.Position = UDim2.new(0.6, 0, 0, 0)
+    PC.vStatus.BackgroundTransparency = 1
+    PC.vStatus.Text = "IDLE"
+    PC.vStatus.TextColor3 = T.faint
+    PC.vStatus.TextSize = 10
+    PC.vStatus.Font = Enum.Font.GothamBold
+    PC.vStatus.TextXAlignment = Enum.TextXAlignment.Right
+    PC.vStatus.ZIndex = 102
+
+    PC.btnVoid = mkBtn(PC.leftCol, 262, 1, 0, "ENABLE VOID", false)
+
+    PC.cHead = Instance.new("Frame")
+    PC.cHead.Parent = PC.leftCol
+    PC.cHead.Size = UDim2.new(1, -4, 0, 22)
+    PC.cHead.Position = UDim2.new(0, 2, 0, 296)
+    PC.cHead.BackgroundColor3 = T.panel
+    PC.cHead.BorderSizePixel = 0
+    PC.cHead.ZIndex = 101
+    Instance.new("UICorner", PC.cHead).CornerRadius = UDim.new(0, 3)
+    local chs = Instance.new("UIStroke", PC.cHead)
+    chs.Color = T.border
+    chs.Thickness = 1
+
+    PC.chTxt = Instance.new("TextLabel")
+    PC.chTxt.Parent = PC.cHead
+    PC.chTxt.Size = UDim2.new(1, -16, 1, 0)
+    PC.chTxt.Position = UDim2.new(0, 8, 0, 0)
+    PC.chTxt.BackgroundTransparency = 1
+    PC.chTxt.Text = "COMBO STATUS"
+    PC.chTxt.TextColor3 = T.dim
+    PC.chTxt.TextSize = 10
+    PC.chTxt.Font = Enum.Font.GothamBold
+    PC.chTxt.TextXAlignment = Enum.TextXAlignment.Left
+    PC.chTxt.ZIndex = 102
+
+    PC.combStat = Instance.new("TextLabel")
+    PC.combStat.Parent = PC.leftCol
+    PC.combStat.Size = UDim2.new(1, -4, 0, 26)
+    PC.combStat.Position = UDim2.new(0, 2, 0, 320)
+    PC.combStat.BackgroundColor3 = T.panel
+    PC.combStat.BorderSizePixel = 0
+    PC.combStat.Text = "both off"
+    PC.combStat.TextColor3 = T.faint
+    PC.combStat.TextSize = 10
+    PC.combStat.Font = Enum.Font.Gotham
+    PC.combStat.ZIndex = 102
+    Instance.new("UICorner", PC.combStat).CornerRadius = UDim.new(0, 3)
+    local cms = Instance.new("UIStroke", PC.combStat)
+    cms.Color = T.border
+    cms.Thickness = 1
+
+    PC.lHead = Instance.new("Frame")
+    PC.lHead.Parent = PC.rightCol
+    PC.lHead.Size = UDim2.new(1, -4, 0, 22)
+    PC.lHead.Position = UDim2.new(0, 2, 0, 0)
+    PC.lHead.BackgroundColor3 = T.panel
+    PC.lHead.BorderSizePixel = 0
+    PC.lHead.ZIndex = 102
+    Instance.new("UICorner", PC.lHead).CornerRadius = UDim.new(0, 3)
+    local lhs = Instance.new("UIStroke", PC.lHead)
+    lhs.Color = T.border
+    lhs.Thickness = 1
+
+    PC.lTxt = Instance.new("TextLabel")
+    PC.lTxt.Parent = PC.lHead
+    PC.lTxt.Size = UDim2.new(0.6, 0, 1, 0)
+    PC.lTxt.Position = UDim2.new(0, 8, 0, 0)
+    PC.lTxt.BackgroundTransparency = 1
+    PC.lTxt.Text = "PLAYERS"
+    PC.lTxt.TextColor3 = T.dim
+    PC.lTxt.TextSize = 10
+    PC.lTxt.Font = Enum.Font.GothamBold
+    PC.lTxt.TextXAlignment = Enum.TextXAlignment.Left
+    PC.lTxt.ZIndex = 103
+
+    PC.pCount = Instance.new("TextLabel")
+    PC.pCount.Parent = PC.lHead
+    PC.pCount.Size = UDim2.new(0.4, -8, 1, 0)
+    PC.pCount.Position = UDim2.new(0.6, 0, 0, 0)
+    PC.pCount.BackgroundTransparency = 1
+    PC.pCount.Text = "0"
+    PC.pCount.TextColor3 = T.text
+    PC.pCount.TextSize = 10
+    PC.pCount.Font = Enum.Font.GothamBold
+    PC.pCount.TextXAlignment = Enum.TextXAlignment.Right
+    PC.pCount.ZIndex = 103
+
+    PC.listBox = Instance.new("ScrollingFrame")
+    PC.listBox.Parent = PC.rightCol
+    PC.listBox.Size = UDim2.new(1, -4, 1, -26)
+    PC.listBox.Position = UDim2.new(0, 2, 0, 26)
+    PC.listBox.BackgroundColor3 = T.panel
+    PC.listBox.BorderSizePixel = 0
+    PC.listBox.ScrollBarThickness = 3
+    PC.listBox.ScrollBarImageColor3 = T.border
+    PC.listBox.CanvasSize = UDim2.new(0, 0, 0, 0)
+    PC.listBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    PC.listBox.ZIndex = 102
+    Instance.new("UICorner", PC.listBox).CornerRadius = UDim.new(0, 3)
+    local lbs = Instance.new("UIStroke", PC.listBox)
+    lbs.Color = T.border
+    lbs.Thickness = 1
+    local lbp = Instance.new("UIPadding", PC.listBox)
+    lbp.PaddingTop = UDim.new(0, 3)
+    lbp.PaddingBottom = UDim.new(0, 3)
+    lbp.PaddingLeft = UDim.new(0, 3)
+    lbp.PaddingRight = UDim.new(0, 3)
+    local lbl2 = Instance.new("UIListLayout", PC.listBox)
+    lbl2.Padding = UDim.new(0, 3)
+
+    PC.combatScroll = Instance.new("ScrollingFrame")
+    PC.combatScroll.Parent = PC.pgCombat
+    PC.combatScroll.Size = UDim2.new(1, 0, 1, 0)
+    PC.combatScroll.BackgroundTransparency = 1
+    PC.combatScroll.BorderSizePixel = 0
+    PC.combatScroll.ScrollBarThickness = 3
+    PC.combatScroll.ScrollBarImageColor3 = T.border
+    PC.combatScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    PC.combatScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    PC.combatScroll.ZIndex = 102
+
+    mkHeader(PC.combatScroll, 4, "HIT SOUND")
+    PC.btnHitSound = mkBtn(PC.combatScroll, 32, 1, 0, "HIT SOUND: OFF", false)
+
+    PC.soundInput = Instance.new("TextBox")
+    PC.soundInput.Parent = PC.combatScroll
+    PC.soundInput.Size = UDim2.new(1, -8, 0, 26)
+    PC.soundInput.Position = UDim2.new(0, 4, 0, 64)
+    PC.soundInput.BackgroundColor3 = T.panel2
+    PC.soundInput.BorderSizePixel = 0
+    PC.soundInput.Text = ""
+    PC.soundInput.PlaceholderText = "paste sound id here"
+    PC.soundInput.PlaceholderColor3 = T.faint
+    PC.soundInput.TextColor3 = T.text
+    PC.soundInput.Font = Enum.Font.Gotham
+    PC.soundInput.TextSize = 11
+    PC.soundInput.ClearTextOnFocus = false
+    PC.soundInput.ZIndex = 102
+    Instance.new("UICorner", PC.soundInput).CornerRadius = UDim.new(0, 3)
+    local siStroke = Instance.new("UIStroke", PC.soundInput)
+    siStroke.Color = T.border
+    siStroke.Thickness = 1
+
+    PC.soundInput.FocusLost:Connect(function()
+        local txt = PC.soundInput.Text
+        if txt == "" then
+            PC.hitSound.SoundId = PC.DEFAULT_SOUND
+            cfg.soundId = ""
+            return
+        end
+        local id = txt:match("%d+")
+        if id then
+            PC.hitSound.SoundId = "rbxassetid://" .. id
+            cfg.soundId = id
+        end
+    end)
+
+    mkHeader(PC.combatScroll, 100, "AUTO MELEE")
+    PC.btnAutoMelee = mkBtn(PC.combatScroll, 128, 1, 0, "AUTO MELEE: OFF", false)
+
+    mkHeader(PC.combatScroll, 162, "MOVEMENT")
+    PC.btnNoclip = mkBtn(PC.combatScroll, 190, 1, 0, "NOCLIP: OFF", false)
+    PC.btnFly = mkBtn(PC.combatScroll, 220, 1, 0, "FLY: OFF", false)
+    PC.btnAntiAim = mkBtn(PC.combatScroll, 250, 1, 0, "ANTI-AIM: OFF", false)
+
+    mkSlider(PC.combatScroll, 284, "FLY SPEED", "studs per second", 0.3,
+        function(pos)
+            local v = math.floor(20 + pos * 280 + 0.5)
+            cfg.flySpeed = v
+            return tostring(v)
+        end,
+        function(pos) end
+    )
+
+    mkSlider(PC.combatScroll, 362, "ANTI-AIM DEPTH", "how far under the map", 0.3,
+        function(pos)
+            local v = math.floor(10 + pos * 90 + 0.5)
+            cfg.antiAimDepth = v
+            return tostring(v)
+        end,
+        function(pos) end
+    )
+
+    mkHeader(PC.combatScroll, 440, "VOIDSPAM SETTINGS")
+
+    mkSlider(PC.combatScroll, 468, "VOIDSPAM TELEPORT", "pin time on target head (0.1-0.5s)", 0.5,
+        function(pos)
+            local v = math.round((0.1 + pos * 0.4) * 10) / 10
+            v = math.clamp(v, 0.1, 0.5)
+            cfg.holdTime = v
+            return string.format("%.1fs", v)
+        end,
+        function(pos) end
+    )
+
+    mkSlider(PC.combatScroll, 546, "VOIDSPAM DISTANCE", "how far the fling sends you", 0.5,
+        function(pos)
+            local v = math.floor(1000 + pos * 9999000 + 0.5)
+            v = math.clamp(v, 1000, 10000000)
+            cfg.voidForce = v
+            return tostring(v)
+        end,
+        function(pos) end
+    )
+
+    mkHeader(PC.combatScroll, 624, "ATTACK")
+    PC.btnRapidFire = mkBtn(PC.combatScroll, 652, 1, 0, "RAPID FIRE: OFF", false)
+    PC.btnRapidAttack = mkBtn(PC.combatScroll, 682, 1, 0, "RAPID ATTACK: OFF", false)
+
+    mkHeader(PC.combatScroll, 718, "BACKGLUE")
+    PC.btnBg = mkBtn(PC.combatScroll, 746, 1, 0, "BACKGLUE: OFF", false)
+
+    PC.bgStatus = Instance.new("TextLabel")
+    PC.bgStatus.Parent = PC.combatScroll
+    PC.bgStatus.Size = UDim2.new(1, -8, 0, 22)
+    PC.bgStatus.Position = UDim2.new(0, 4, 0, 778)
+    PC.bgStatus.BackgroundColor3 = T.panel
+    PC.bgStatus.BorderSizePixel = 0
+    PC.bgStatus.Text = "idle"
+    PC.bgStatus.TextColor3 = T.faint
+    PC.bgStatus.TextSize = 10
+    PC.bgStatus.Font = Enum.Font.Gotham
+    PC.bgStatus.ZIndex = 103
+    Instance.new("UICorner", PC.bgStatus).CornerRadius = UDim.new(0, 3)
+    local bgs = Instance.new("UIStroke", PC.bgStatus)
+    bgs.Color = T.border
+    bgs.Thickness = 1
+
+    PC.btnBgCam = mkBtn(PC.combatScroll, 808, 1, 0, "GLUE LOCK CAMERA: OFF", false)
+    PC.btnBgTeam = mkBtn(PC.combatScroll, 838, 1, 0, "GLUE IGNORE TEAM: OFF", false)
+
+    mkHeader(PC.pgVisual, 4, "ESP")
+    PC.btnEsp = mkBtn(PC.pgVisual, 32, 1, 0, "HIGHLIGHT ESP: OFF", false)
+    PC.btnColor = mkBtn(PC.pgVisual, 62, 1, 0, "COLOR: WHITE", false)
+    PC.btnAura = mkBtn(PC.pgVisual, 92, 1, 0, "AURA: OFF", false)
+    PC.btnAuraColor = mkBtn(PC.pgVisual, 122, 1, 0, "AURA COLOR: WHITE", false)
+
+    mkHeader(PC.pgVisual, 158, "LIGHTING")
+    PC.btnFullbright = mkBtn(PC.pgVisual, 186, 1, 0, "FULLBRIGHT: OFF", false)
+
+    mkHeader(PC.pgVisual, 222, "CAMERA")
+    PC.btnCamFollow = mkBtn(PC.pgVisual, 250, 1, 0, "CAMERA FOLLOW: OFF", false)
+
+    mkHeader(PC.pgVisual, 286, "HUD")
+    PC.btnKillFeed = mkBtn(PC.pgVisual, 314, 1, 0, "KILL FEED: ON", true)
+    PC.btnCombatTimer = mkBtn(PC.pgVisual, 344, 1, 0, "COMBAT TIMER: ON", true)
+    PC.btnSuspicious = mkBtn(PC.pgVisual, 374, 1, 0, "THREAT DETECTION: ON", true)
+    PC.btnVoidTrack = mkBtn(PC.pgVisual, 404, 1, 0, "VOID TRACKER: ON", true)
+    PC.btnNotifications = mkBtn(PC.pgVisual, 434, 1, 0, "NOTIFICATIONS: ON", true)
+
+    mkHeader(PC.pgSettings, 4, "CONFIG")
+    PC.configInput = Instance.new("TextBox")
+    PC.configInput.Parent = PC.pgSettings
+    PC.configInput.Size = UDim2.new(1, -8, 0, 26)
+    PC.configInput.Position = UDim2.new(0, 4, 0, 30)
+    PC.configInput.BackgroundColor3 = T.panel2
+    PC.configInput.BorderSizePixel = 0
+    PC.configInput.Text = ""
+    PC.configInput.PlaceholderText = "config name"
+    PC.configInput.PlaceholderColor3 = T.faint
+    PC.configInput.TextColor3 = T.text
+    PC.configInput.Font = Enum.Font.Gotham
+    PC.configInput.TextSize = 11
+    PC.configInput.ClearTextOnFocus = false
+    PC.configInput.ZIndex = 102
+    Instance.new("UICorner", PC.configInput).CornerRadius = UDim.new(0, 3)
+    local ciStroke = Instance.new("UIStroke", PC.configInput)
+    ciStroke.Color = T.border
+    ciStroke.Thickness = 1
+
+    PC.btnCfgSave = mkBtn(PC.pgSettings, 62, 0.5, 0, "SAVE", false)
+    PC.btnCfgRefresh = mkBtn(PC.pgSettings, 62, 0.5, 0.5, "REFRESH", false)
+
+    PC.configList = Instance.new("ScrollingFrame")
+    PC.configList.Parent = PC.pgSettings
+    PC.configList.Size = UDim2.new(1, -8, 0, 90)
+    PC.configList.Position = UDim2.new(0, 4, 0, 96)
+    PC.configList.BackgroundColor3 = T.panel2
+    PC.configList.BorderSizePixel = 0
+    PC.configList.ScrollBarThickness = 3
+    PC.configList.ScrollBarImageColor3 = T.border
+    PC.configList.CanvasSize = UDim2.new(0, 0, 0, 0)
+    PC.configList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    PC.configList.ZIndex = 102
+    Instance.new("UICorner", PC.configList).CornerRadius = UDim.new(0, 3)
+    local clStroke = Instance.new("UIStroke", PC.configList)
+    clStroke.Color = T.border
+    clStroke.Thickness = 1
+    local clPad = Instance.new("UIPadding", PC.configList)
+    clPad.PaddingTop = UDim.new(0, 3)
+    clPad.PaddingBottom = UDim.new(0, 3)
+    clPad.PaddingLeft = UDim.new(0, 3)
+    clPad.PaddingRight = UDim.new(0, 3)
+    local clLayout = Instance.new("UIListLayout", PC.configList)
+    clLayout.Padding = UDim.new(0, 3)
+
+    PC.btnCfgLoad = mkBtn(PC.pgSettings, 194, 0.5, 0, "LOAD", false)
+    PC.btnCfgAuto = mkBtn(PC.pgSettings, 194, 0.5, 0.5, "AUTO: OFF", false)
+
+    mkHeader(PC.pgSettings, 232, "KEYBINDS")
+    PC.btnKeyTele = mkBtn(PC.pgSettings, 260, 0.5, 0, "TELE: L", false)
+    PC.btnKeyVoid = mkBtn(PC.pgSettings, 260, 0.5, 0.5, "VOID: V", false)
+    PC.btnKeyFly = mkBtn(PC.pgSettings, 290, 0.5, 0, "FLY: F", false)
+
+    mkHeader(PC.pgSettings, 326, "OVERLAY")
+    PC.btnFps = mkBtn(PC.pgSettings, 354, 1, 0, "FPS OVERLAY: ON", true)
+end
+
+do
+    local Players = PC.Players
+    local LP = PC.LP
+    local UIS = PC.UIS
+    local RS = PC.RS
+    local Stats = PC.Stats
+    local Lighting = PC.Lighting
+    local cfg = PC.cfg
+    local T = PC.T
+    local toast = PC.toast
+
+    local function refreshConfigList()
+        for _, c in ipairs(PC.configList:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        cfg.activeConfig = ""
+        if not listfiles or not isfolder then return end
+        if not isfolder(PC.CONFIG_DIR) then
+            pcall(function() makefolder(PC.CONFIG_DIR) end)
+        end
+        local ok, files = pcall(function() return listfiles(PC.CONFIG_DIR) end)
+        if not ok or not files then return end
+        for _, path in ipairs(files) do
+            local name = path:match("([^/\\]+)%.txt$")
+            if name then
+                local b = Instance.new("TextButton")
+                b.Parent = PC.configList
+                b.Size = UDim2.new(1, 0, 0, 22)
+                b.BackgroundColor3 = T.panel2
+                b.Text = name
+                b.TextColor3 = T.text
+                b.TextSize = 10
+                b.Font = Enum.Font.Gotham
+                b.BorderSizePixel = 0
+                b.TextXAlignment = Enum.TextXAlignment.Left
+                b.AutoButtonColor = false
+                b.ZIndex = 103
+                Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
+                local s = Instance.new("UIStroke", b)
+                s.Color = T.border
+                s.Thickness = 1
+                local pad = Instance.new("UIPadding", b)
+                pad.PaddingLeft = UDim.new(0, 6)
+                b.MouseButton1Click:Connect(function()
+                    cfg.activeConfig = name
+                    for _, other in ipairs(PC.configList:GetChildren()) do
+                        if other:IsA("TextButton") then
+                            other.BackgroundColor3 = T.panel2
+                            other.TextColor3 = T.text
+                        end
+                    end
+                    b.BackgroundColor3 = T.accent
+                    b.TextColor3 = T.bg
+                end)
+            end
+        end
+    end
+    PC.refreshConfigList = refreshConfigList
+
+    local function refreshList()
+        for _, c in ipairs(PC.listBox:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        PC.refreshPlayers()
+        PC.pCount.Text = tostring(#PC.players)
+        for _, p in ipairs(PC.players) do
+            local b = Instance.new("TextButton")
+            b.Parent = PC.listBox
+            b.Size = UDim2.new(1, 0, 0, 24)
+            b.BackgroundColor3 = T.panel2
+            b.Text = " " .. p.Name
+            b.TextColor3 = T.text
+            b.TextSize = 10
+            b.Font = Enum.Font.Gotham
+            b.BorderSizePixel = 0
+            b.TextXAlignment = Enum.TextXAlignment.Left
+            b.AutoButtonColor = false
+            b.ZIndex = 103
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
+            local s = Instance.new("UIStroke", b)
+            s.Color = T.border
+            s.Thickness = 1
+            b.MouseButton1Click:Connect(function()
+                cfg.selected = p
+                cfg.useAll = false
+                PC.btnAll.BackgroundColor3 = T.panel2
+                PC.btnAll.TextColor3 = T.text
+                PC.btnSel.BackgroundColor3 = T.accent
+                PC.btnSel.TextColor3 = T.bg
+                PC.btnSel.Text = p.Name:sub(1, 10)
+            end)
+        end
+    end
+    PC.refreshList = refreshList
+
+    local function updateCombo()
+        if cfg.teleEnabled and cfg.voidEnabled then
+            PC.combStat.Text = string.format("pin %.1fs @ nearest head", cfg.holdTime)
+            PC.combStat.TextColor3 = T.text
+        elseif cfg.teleEnabled then
+            PC.combStat.Text = "teleport only"
+            PC.combStat.TextColor3 = T.faint
+        elseif cfg.voidEnabled then
+            PC.combStat.Text = "void only"
+            PC.combStat.TextColor3 = T.faint
+        else
+            PC.combStat.Text = "both off"
+            PC.combStat.TextColor3 = T.faint
+        end
+    end
+    PC.updateCombo = updateCombo
+
+    local function clearHold()
+        cfg.holding = false
+        cfg.holdTarget = nil
+    end
+    PC.clearHold = clearHold
+
+    local function startCombo()
+        if PC.comboThread then return end
+        PC.comboThread = task.spawn(function()
+            while cfg.teleEnabled and cfg.voidEnabled do
+                local near = PC.nearestPlayer()
+                if near then
+                    cfg.holding = true
+                    cfg.holdTarget = near
+                    if PC.teleportTo(near) then
+                        PC.statTgt.Text = "-> " .. near.Name
+                    end
+                    task.wait(cfg.holdTime)
+                    clearHold()
+                end
+                task.wait(0.5)
+            end
+            clearHold()
+            PC.comboThread = nil
+        end)
+    end
+    PC.startCombo = startCombo
+
+    local function setTele(state)
+        cfg.teleEnabled = state
+        if state then
+            cfg.useAll = true
+            cfg.selected = nil
+            PC.refreshPlayers()
+            PC.playerIndex = 1
+            PC.lastTele = tick()
+            PC.lastCycle = tick()
+            PC.btnEnable.BackgroundColor3 = T.accent
+            PC.btnEnable.TextColor3 = T.bg
+            PC.btnEnable.Text = "DISABLE TELEPORT"
+            PC.statLbl.Text = "ENABLED"
+            PC.statDot.BackgroundColor3 = T.text
+            PC.btnAll.BackgroundColor3 = T.accent
+            PC.btnAll.TextColor3 = T.bg
+            PC.btnSel.BackgroundColor3 = T.panel2
+            PC.btnSel.TextColor3 = T.text
+            PC.btnSel.Text = "SELECT"
+            refreshList()
+            if cfg.voidEnabled then startCombo() end
+        else
+            clearHold()
+            PC.btnEnable.BackgroundColor3 = T.panel2
+            PC.btnEnable.TextColor3 = T.text
+            PC.btnEnable.Text = "ENABLE TELEPORT"
+            PC.statLbl.Text = "DISABLED"
+            PC.statDot.BackgroundColor3 = T.text
+            PC.statTgt.Text = "no target"
+        end
+        updateCombo()
+    end
+    PC.setTele = setTele
+
+    local function applyVoid()
+        local r = PC.getRoot()
+        if not r then return end
+        if cfg.holding and cfg.holdTarget then
+            local tc = cfg.holdTarget.Character
+            local th = tc and tc:FindFirstChild("Head")
+            if th then
+                r.CFrame = CFrame.new(th.Position + Vector3.new(0, 1, 0))
+                r.Velocity = Vector3.new(0, 0, 0)
+                r.RotVelocity = Vector3.new(0, 0, 0)
+                return
+            else
+                clearHold()
+            end
+        end
+        local f = cfg.voidForce
+        if f < 1 then f = 1 end
+        local function rs()
+            local m = PC.rng:NextNumber(f * 0.7, f)
+            if PC.rng:NextInteger(0, 1) == 0 then return -m end
+            return m
+        end
+        r.Velocity = Vector3.new(rs(), PC.rng:NextNumber(f * 0.7, f), rs())
+        r.RotVelocity = Vector3.new(
+            PC.rng:NextNumber(-10000, 10000),
+            PC.rng:NextNumber(-10000, 10000),
+            PC.rng:NextNumber(-10000, 10000)
+        )
+    end
+    PC.applyVoid = applyVoid
+
+    local function setVoid(state)
+        cfg.voidEnabled = state
+        if state then
+            PC.btnVoid.BackgroundColor3 = T.accent
+            PC.btnVoid.TextColor3 = T.bg
+            PC.btnVoid.Text = "DISABLE VOID"
+            PC.vStatus.Text = "ACTIVE"
+            PC.vStatus.TextColor3 = T.text
+            PC.voidThread = task.spawn(function()
+                while cfg.voidEnabled do
+                    applyVoid()
+                    task.wait(cfg.voidInterval)
+                end
+            end)
+            if cfg.teleEnabled then startCombo() end
+        else
+            clearHold()
+            PC.btnVoid.BackgroundColor3 = T.panel2
+            PC.btnVoid.TextColor3 = T.text
+            PC.btnVoid.Text = "ENABLE VOID"
+            PC.vStatus.Text = "IDLE"
+            PC.vStatus.TextColor3 = T.faint
+            PC.voidThread = nil
+        end
+        updateCombo()
+    end
+    PC.setVoid = setVoid
+
+    local function isMelee(tool)
+        local name = string.lower(tool.Name)
+        for _, kw in ipairs(PC.meleeKeywords) do
+            if string.find(name, kw, 1, true) then return true end
+        end
+        return false
+    end
+    PC.isMelee = isMelee
+
+    local function findMelee()
+        local char = LP.Character
+        if not char then return nil end
+        for _, c in ipairs(char:GetChildren()) do
+            if c:IsA("Tool") and isMelee(c) then return c, true end
+        end
+        local bp = LP:FindFirstChildOfClass("Backpack")
+        if bp then
+            for _, c in ipairs(bp:GetChildren()) do
+                if c:IsA("Tool") and isMelee(c) then return c, false end
+            end
+        end
+        return nil
+    end
+    PC.findMelee = findMelee
+
+    local function startAutoMelee()
+        if PC.autoMeleeThread then return end
+        PC.autoMeleeThread = task.spawn(function()
+            while cfg.autoMelee do
+                local tool, equipped = findMelee()
+                if tool then
+                    local hum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and not equipped then
+                        pcall(function() hum:EquipTool(tool) end)
+                    end
+                end
+                task.wait(0.3)
+            end
+            PC.autoMeleeThread = nil
+        end)
+    end
+    PC.startAutoMelee = startAutoMelee
+
+    local function stopAutoMelee()
+        cfg.autoMelee = false
+        PC.autoMeleeThread = nil
+    end
+    PC.stopAutoMelee = stopAutoMelee
+
+    local function startRapidFire()
+        if PC.rapidFireThread then return end
+        PC.rapidFireThread = task.spawn(function()
+            while cfg.rapidFire do
+                if PC.mouseDown then
+                    local char = LP.Character
+                    if char then
+                        local tool = char:FindFirstChildOfClass("Tool")
+                        if tool then
+                            pcall(function() tool:Activate() end)
+                        end
+                    end
+                end
+                task.wait(0.02)
+            end
+            PC.rapidFireThread = nil
+        end)
+    end
+    PC.startRapidFire = startRapidFire
+
+    local function setRapidFire(state)
+        cfg.rapidFire = state
+        if state then
+            PC.btnRapidFire.BackgroundColor3 = T.accent
+            PC.btnRapidFire.TextColor3 = T.bg
+            PC.btnRapidFire.Text = "RAPID FIRE: ON"
+            startRapidFire()
+            toast("Rapid fire ON", T.ok)
+        else
+            PC.btnRapidFire.BackgroundColor3 = T.panel2
+            PC.btnRapidFire.TextColor3 = T.text
+            PC.btnRapidFire.Text = "RAPID FIRE: OFF"
+        end
+    end
+    PC.setRapidFire = setRapidFire
+
+    PC.rapidAttackCooldownProps = {
+        "AttackCooldown", "attackCooldown", "Cooldown", "cooldown",
+        "FireRate", "fireRate", "ReloadTime", "reloadTime",
+        "SwingCooldown", "swingCooldown", "HitCooldown", "hitCooldown",
+        "Debounce", "debounce", "AttackDelay", "attackDelay",
+        "UseDelay", "useDelay", "NextAttack", "nextAttack",
+    }
+
+    local function stripCooldown(inst)
+        if not inst then return end
+        if inst:IsA("ValueBase") then
+            pcall(function()
+                if typeof(inst.Value) == "number" and inst.Value > 0 then
+                    inst.Value = 0
+                end
+            end)
+        end
+        for _, prop in ipairs(PC.rapidAttackCooldownProps) do
+            pcall(function()
+                local v = inst[prop]
+                if typeof(v) == "number" and v > 0 then
+                    inst[prop] = 0
+                end
+            end)
+        end
+    end
+    PC.stripCooldown = stripCooldown
+
+    local function rapidAttackScan(char)
+        if not char then return end
+        for _, d in ipairs(char:GetDescendants()) do
+            stripCooldown(d)
+        end
+        for _, tool in ipairs(char:GetChildren()) do
+            if tool:IsA("Tool") then
+                stripCooldown(tool)
+                for _, d in ipairs(tool:GetDescendants()) do
+                    stripCooldown(d)
+                end
+            end
+        end
+    end
+    PC.rapidAttackScan = rapidAttackScan
+
+    local function hookToolRapidAttack(tool)
+        if not tool:IsA("Tool") then return end
+        stripCooldown(tool)
+        for _, d in ipairs(tool:GetDescendants()) do
+            stripCooldown(d)
+        end
+        if tool:FindFirstChild("Cooldown") and not tool:FindFirstChild("Cooldown").__pcHooked then
+            local cd = tool:FindFirstChild("Cooldown")
+            if cd:IsA("NumberValue") or cd:IsA("IntValue") then
+                cd.__pcHooked = true
+                cd.Changed:Connect(function()
+                    if cfg.rapidAttack and cd.Value > 0 then
+                        cd.Value = 0
+                    end
+                end)
+            end
+        end
+    end
+    PC.hookToolRapidAttack = hookToolRapidAttack
+
+    local function startRapidAttack()
+        if PC.rapidAttackConn then return end
+        PC.rapidAttackConn = RS.Heartbeat:Connect(function()
+            if not cfg.rapidAttack then return end
+            local char = LP.Character
+            if not char then return end
+            rapidAttackScan(char)
+        end)
+        local char = LP.Character
+        if char then
+            for _, t in ipairs(char:GetChildren()) do
+                if t:IsA("Tool") then hookToolRapidAttack(t) end
+            end
+        end
+    end
+    PC.startRapidAttack = startRapidAttack
+
+    local function setRapidAttack(state)
+        cfg.rapidAttack = state
+        if state then
+            PC.btnRapidAttack.BackgroundColor3 = T.accent
+            PC.btnRapidAttack.TextColor3 = T.bg
+            PC.btnRapidAttack.Text = "RAPID ATTACK: ON"
+            startRapidAttack()
+            toast("Rapid attack ON", T.ok)
+        else
+            PC.btnRapidAttack.BackgroundColor3 = T.panel2
+            PC.btnRapidAttack.TextColor3 = T.text
+            PC.btnRapidAttack.Text = "RAPID ATTACK: OFF"
+            if PC.rapidAttackConn then
+                PC.rapidAttackConn:Disconnect()
+                PC.rapidAttackConn = nil
+            end
+        end
+    end
+    PC.setRapidAttack = setRapidAttack
+
+    local function startFly()
+        local char = LP.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        if PC.flyBV then PC.flyBV:Destroy() end
+        if PC.flyBG then PC.flyBG:Destroy() end
+        PC.flyBV = Instance.new("BodyVelocity")
+        PC.flyBV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+        PC.flyBV.Velocity = Vector3.zero
+        PC.flyBV.Parent = root
+        PC.flyBG = Instance.new("BodyGyro")
+        PC.flyBG.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+        PC.flyBG.P = 9e4
+        PC.flyBG.CFrame = root.CFrame
+        PC.flyBG.Parent = root
+        if PC.flyConn then PC.flyConn:Disconnect() end
+        PC.flyConn = RS.RenderStepped:Connect(function()
+            if not cfg.flyEnabled then return end
+            local c = LP.Character
+            local r = c and c:FindFirstChild("HumanoidRootPart")
+            if not r or not PC.flyBV or not PC.flyBG then return end
+            local cam = workspace.CurrentCamera
+            local dir = Vector3.zero
+            if UIS:IsKeyDown(Enum.KeyCode.W) then dir += cam.CFrame.LookVector end
+            if UIS:IsKeyDown(Enum.KeyCode.S) then dir -= cam.CFrame.LookVector end
+            if UIS:IsKeyDown(Enum.KeyCode.A) then dir -= cam.CFrame.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.D) then dir += cam.CFrame.RightVector end
+            if UIS:IsKeyDown(Enum.KeyCode.Space) then dir += Vector3.new(0, 1, 0) end
+            if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then dir -= Vector3.new(0, 1, 0) end
+            if dir.Magnitude > 0 then
+                PC.flyBV.Velocity = dir.Unit * cfg.flySpeed
+            else
+                PC.flyBV.Velocity = Vector3.zero
+            end
+            PC.flyBG.CFrame = cam.CFrame
+        end)
+    end
+    PC.startFly = startFly
+
+    local function stopFly()
+        if PC.flyConn then PC.flyConn:Disconnect() PC.flyConn = nil end
+        if PC.flyBV then PC.flyBV:Destroy() PC.flyBV = nil end
+        if PC.flyBG then PC.flyBG:Destroy() PC.flyBG = nil end
+    end
+    PC.stopFly = stopFly
+
+    local function setFly(state)
+        cfg.flyEnabled = state
+        if state then
+            PC.btnFly.BackgroundColor3 = T.accent
+            PC.btnFly.TextColor3 = T.bg
+            PC.btnFly.Text = "FLY: ON"
+            startFly()
+            toast("Fly ON", T.ok)
+        else
+            PC.btnFly.BackgroundColor3 = T.panel2
+            PC.btnFly.TextColor3 = T.text
+            PC.btnFly.Text = "FLY: OFF"
+            stopFly()
+        end
+    end
+    PC.setFly = setFly
+
+    local function startAntiAim()
+        if PC.antiAimConn then return end
+        PC.antiAimConn = RS.PreSimulation:Connect(function()
+            if not cfg.antiAim then return end
+            local char = LP.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+            if not PC.antiAimOrigin then
+                PC.antiAimOrigin = root.CFrame
+            end
+            root.CFrame = CFrame.new(PC.antiAimOrigin.Position - Vector3.new(0, cfg.antiAimDepth, 0))
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            local cam = workspace.CurrentCamera
+            cam.CFrame = CFrame.new(PC.antiAimOrigin.Position + Vector3.new(0, 2, 8), PC.antiAimOrigin.Position)
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.AutoRotate = false end
+        end)
+    end
+    PC.startAntiAim = startAntiAim
+
+    local function stopAntiAim()
+        if PC.antiAimConn then PC.antiAimConn:Disconnect() PC.antiAimConn = nil end
+        PC.antiAimOrigin = nil
+        local char = LP.Character
+        if char then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.AutoRotate = true end
+            workspace.CurrentCamera.CameraSubject = hum
+            workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+        end
+    end
+    PC.stopAntiAim = stopAntiAim
+
+    local function setAntiAim(state)
+        cfg.antiAim = state
+        if state then
+            PC.btnAntiAim.BackgroundColor3 = T.accent
+            PC.btnAntiAim.TextColor3 = T.bg
+            PC.btnAntiAim.Text = "ANTI-AIM: ON"
+            startAntiAim()
+            toast("Anti-aim ON", T.ok)
+        else
+            PC.btnAntiAim.BackgroundColor3 = T.panel2
+            PC.btnAntiAim.TextColor3 = T.text
+            PC.btnAntiAim.Text = "ANTI-AIM: OFF"
+            stopAntiAim()
+            toast("Anti-aim OFF", T.warn)
+        end
+    end
+    PC.setAntiAim = setAntiAim
+
+    local function bgPickTarget()
+        local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        local origin = myRoot and myRoot.Position or workspace.CurrentCamera.CFrame.Position
+        local best, bestDist = nil, math.huge
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LP then
+                if not (cfg.bgIgnoreTeam and p.Team == LP.Team) then
+                    local c = p.Character
+                    local hum = c and c:FindFirstChildOfClass("Humanoid")
+                    local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                    if hum and hrp and hum.Health > 0 then
+                        local d = (hrp.Position - origin).Magnitude
+                        if d < bestDist then
+                            bestDist = d
+                            best = hrp
+                        end
+                    end
+                end
+            end
+        end
+        return best
+    end
+    PC.bgPickTarget = bgPickTarget
+
+    local function bgStart()
+        if PC.bgConn then return end
+        PC.bgConn = RS.PreSimulation:Connect(function()
+            if not cfg.bgEnabled then return end
+
+            local char = LP.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local myRoot = char and char:FindFirstChild("HumanoidRootPart")
+            if not hum or hum.Health <= 0 or not myRoot then
+                PC.bgStatus.Text = "no character"
+                return
+            end
+
+            if not PC.bgLockedTarget or not PC.bgLockedTarget.Parent then
+                PC.bgLockedTarget = bgPickTarget()
+            else
+                local tHum = PC.bgLockedTarget.Parent:FindFirstChildOfClass("Humanoid")
+                if not tHum or tHum.Health <= 0 then
+                    PC.bgLockedTarget = bgPickTarget()
+                end
+            end
+
+            local targetRoot = PC.bgLockedTarget
+            if not targetRoot then
+                PC.bgStatus.Text = "no target"
+                return
+            end
+
+            local look = targetRoot.CFrame.LookVector
+            local pos = targetRoot.Position - (look * cfg.bgOffsetBack) + Vector3.new(0, cfg.bgOffsetUp, 0)
+            myRoot.CFrame = CFrame.new(pos, targetRoot.Position)
+            myRoot.AssemblyLinearVelocity = Vector3.zero
+            myRoot.AssemblyAngularVelocity = Vector3.zero
+
+            if cfg.bgLockCamera then
+                workspace.CurrentCamera.CFrame = CFrame.new(workspace.CurrentCamera.CFrame.Position, targetRoot.Position)
+            end
+
+            PC.bgStatus.Text = "glued: " .. (targetRoot.Parent and targetRoot.Parent.Name or "?")
+        end)
+    end
+    PC.bgStart = bgStart
+
+    local function bgStop()
+        if PC.bgConn then PC.bgConn:Disconnect() PC.bgConn = nil end
+        PC.bgLockedTarget = nil
+        PC.bgStatus.Text = "idle"
+    end
+    PC.bgStop = bgStop
+
+    local function setFullbright(state)
+        cfg.fullbright = state
+        if state then
+            if not PC.savedLighting then
+                PC.savedLighting = {
+                    Ambient = Lighting.Ambient,
+                    OutdoorAmbient = Lighting.OutdoorAmbient,
+                    Brightness = Lighting.Brightness,
+                    GlobalShadows = Lighting.GlobalShadows,
+                    FogEnd = Lighting.FogEnd,
+                }
+            end
+            Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+            Lighting.Brightness = 3
+            Lighting.GlobalShadows = false
+            Lighting.FogEnd = 100000
+            PC.btnFullbright.BackgroundColor3 = T.accent
+            PC.btnFullbright.TextColor3 = T.bg
+            PC.btnFullbright.Text = "FULLBRIGHT: ON"
+        else
+            if PC.savedLighting then
+                Lighting.Ambient = PC.savedLighting.Ambient
+                Lighting.OutdoorAmbient = PC.savedLighting.OutdoorAmbient
+                Lighting.Brightness = PC.savedLighting.Brightness
+                Lighting.GlobalShadows = PC.savedLighting.GlobalShadows
+                Lighting.FogEnd = PC.savedLighting.FogEnd
+                PC.savedLighting = nil
+            end
+            PC.btnFullbright.BackgroundColor3 = T.panel2
+            PC.btnFullbright.TextColor3 = T.text
+            PC.btnFullbright.Text = "FULLBRIGHT: OFF"
+        end
+    end
+    PC.setFullbright = setFullbright
+
+    local function setNoclip(state)
+        cfg.noclip = state
+        if state then
+            PC.btnNoclip.BackgroundColor3 = T.accent
+            PC.btnNoclip.TextColor3 = T.bg
+            PC.btnNoclip.Text = "NOCLIP: ON"
+            if PC.noclipConn then PC.noclipConn:Disconnect() end
+            PC.noclipConn = RS.Stepped:Connect(function()
+                local char = LP.Character
+                if not char then return end
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide then
+                        part.CanCollide = false
+                    end
+                end
+            end)
+        else
+            if PC.noclipConn then
+                PC.noclipConn:Disconnect()
+                PC.noclipConn = nil
+            end
+            local char = LP.Character
+            if char then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                        part.CanCollide = true
+                    end
+                end
+            end
+            PC.btnNoclip.BackgroundColor3 = T.panel2
+            PC.btnNoclip.TextColor3 = T.text
+            PC.btnNoclip.Text = "NOCLIP: OFF"
+        end
+    end
+    PC.setNoclip = setNoclip
+
+    local function applyHighlight(p)
+        local c = p.Character
+        if not c then return end
+        local ex = PC.highlights[p]
+        if ex and ex.Parent == c then return end
+        if ex then ex:Destroy() end
+        local h = Instance.new("Highlight")
+        h.FillColor = PC.curColor()
+        h.OutlineColor = PC.curColor()
+        h.FillTransparency = 0.6
+        h.OutlineTransparency = 0
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Adornee = c
+        h.Parent = c
+        PC.highlights[p] = h
+    end
+    PC.applyHighlight = applyHighlight
+
+    local function clearHighlight(p)
+        local h = PC.highlights[p]
+        if h then h:Destroy() PC.highlights[p] = nil end
+    end
+    PC.clearHighlight = clearHighlight
+
+    local function refreshColors()
+        local col = PC.curColor()
+        for _, h in pairs(PC.highlights) do
+            if h and h.Parent then
+                h.FillColor = col
+                h.OutlineColor = col
+            end
+        end
+    end
+    PC.refreshColors = refreshColors
+
+    local function setEsp(state)
+        cfg.espEnabled = state
+        if state then
+            PC.btnEsp.BackgroundColor3 = T.accent
+            PC.btnEsp.TextColor3 = T.bg
+            PC.btnEsp.Text = "HIGHLIGHT ESP: ON"
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LP then applyHighlight(p) end
+            end
+        else
+            PC.btnEsp.BackgroundColor3 = T.panel2
+            PC.btnEsp.TextColor3 = T.text
+            PC.btnEsp.Text = "HIGHLIGHT ESP: OFF"
+            for p, _ in pairs(PC.highlights) do clearHighlight(p) end
+        end
+    end
+    PC.setEsp = setEsp
+
+    local function applyAura()
+        local c = LP.Character
+        if not c then return end
+        if PC.auraHighlight then PC.auraHighlight:Destroy() end
+        if PC.auraLight then PC.auraLight:Destroy() end
+
+        local col = PC.curAuraColor()
+
+        local h = Instance.new("Highlight")
+        h.FillColor = col
+        h.OutlineColor = col
+        h.FillTransparency = 0.5
+        h.OutlineTransparency = 0
+        h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        h.Adornee = c
+        h.Parent = c
+        PC.auraHighlight = h
+
+        local root = c:FindFirstChild("HumanoidRootPart")
+        if root then
+            local l = Instance.new("PointLight")
+            l.Color = col
+            l.Range = 18
+            l.Brightness = 3
+            l.Shadows = false
+            l.Parent = root
+            PC.auraLight = l
+        end
+    end
+    PC.applyAura = applyAura
+
+    local function clearAura()
+        if PC.auraHighlight then PC.auraHighlight:Destroy() PC.auraHighlight = nil end
+        if PC.auraLight then PC.auraLight:Destroy() PC.auraLight = nil end
+    end
+    PC.clearAura = clearAura
+
+    local function setAura(state)
+        cfg.auraEnabled = state
+        if state then
+            PC.btnAura.BackgroundColor3 = T.accent
+            PC.btnAura.TextColor3 = T.bg
+            PC.btnAura.Text = "AURA: ON"
+            applyAura()
+        else
+            PC.btnAura.BackgroundColor3 = T.panel2
+            PC.btnAura.TextColor3 = T.text
+            PC.btnAura.Text = "AURA: OFF"
+            clearAura()
+        end
+    end
+    PC.setAura = setAura
+
+    local function getCamNearestPlayer()
+        local character = LP.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not root then return nil end
+        local nearest
+        local nearestDistance = math.huge
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LP then
+                local tc = player.Character
+                local tr = tc and tc:FindFirstChild("HumanoidRootPart")
+                local th = tc and tc:FindFirstChild("Head")
+                if tr and th then
+                    local d = (root.Position - tr.Position).Magnitude
+                    if d < nearestDistance then
+                        nearestDistance = d
+                        nearest = player
+                    end
+                end
+            end
+        end
+        return nearest
+    end
+    PC.getCamNearestPlayer = getCamNearestPlayer
+
+    local function setCamFollow(state)
+        cfg.cameraFollow = state
+        if state then
+            PC.btnCamFollow.BackgroundColor3 = T.accent
+            PC.btnCamFollow.TextColor3 = T.bg
+            PC.btnCamFollow.Text = "CAMERA FOLLOW: ON"
+            PC.camFollowTarget = getCamNearestPlayer()
+            toast("Camera follow ON", T.ok)
+        else
+            PC.btnCamFollow.BackgroundColor3 = T.panel2
+            PC.btnCamFollow.TextColor3 = T.text
+            PC.btnCamFollow.Text = "CAMERA FOLLOW: OFF"
+            PC.camFollowTarget = nil
+
+            local cam = workspace.CurrentCamera
+            cam.CameraType = Enum.CameraType.Custom
+
+            local character = LP.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                cam.CameraSubject = humanoid
+                humanoid.AutoRotate = true
+            end
+        end
+    end
+    PC.setCamFollow = setCamFollow
+
+    PC.btnCamFollow.MouseButton1Click:Connect(function() setCamFollow(not cfg.cameraFollow) end)
+
+    local presets = {
+        { name = "TROLL", holdTime = 0.3, voidForce = 500000, teleDelay = 0.5 },
+        { name = "FIGHT", holdTime = 0.3, voidForce = 2000000, teleDelay = 0.5 },
+        { name = "CHAOS", holdTime = 0.1, voidForce = 8000000, teleDelay = 0.2 },
+    }
+
+    for i, preset in ipairs(presets) do
+        local b = Instance.new("TextButton")
+        b.Parent = PC.presetRow
+        b.Size = UDim2.new(0.32, 0, 1, 0)
+        b.BackgroundColor3 = T.panel2
+        b.Text = preset.name
+        b.TextColor3 = T.text
+        b.TextSize = 10
+        b.Font = Enum.Font.GothamBold
+        b.BorderSizePixel = 0
+        b.AutoButtonColor = false
+        b.ZIndex = 103
+        b.LayoutOrder = i
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 3)
+        local s = Instance.new("UIStroke", b)
+        s.Color = T.border
+        s.Thickness = 1
+        b.MouseButton1Click:Connect(function()
+            cfg.holdTime = preset.holdTime
+            cfg.voidForce = preset.voidForce
+            cfg.teleDelay = preset.teleDelay
+            if not cfg.voidEnabled then setVoid(true) end
+            if not cfg.teleEnabled then setTele(true) end
+            toast("Preset: " .. preset.name, T.accent)
+        end)
+    end
+
+    PC.btnEsp.MouseButton1Click:Connect(function() setEsp(not cfg.espEnabled) end)
+
+    PC.btnColor.MouseButton1Click:Connect(function()
+        cfg.espColor = (cfg.espColor % #PC.colors) + 1
+        PC.btnColor.Text = "COLOR: " .. PC.colorNames[cfg.espColor]
+        refreshColors()
+    end)
+
+    PC.btnAura.MouseButton1Click:Connect(function() setAura(not cfg.auraEnabled) end)
+
+    PC.btnAuraColor.MouseButton1Click:Connect(function()
+        cfg.auraColor = (cfg.auraColor % #PC.colors) + 1
+        PC.btnAuraColor.Text = "AURA COLOR: " .. PC.colorNames[cfg.auraColor]
+        if cfg.auraEnabled then
+            local col = PC.curAuraColor()
+            if PC.auraHighlight then
+                PC.auraHighlight.FillColor = col
+                PC.auraHighlight.OutlineColor = col
+            end
+            if PC.auraLight then PC.auraLight.Color = col end
+        end
+    end)
+
+    PC.btnHitSound.MouseButton1Click:Connect(function()
+        cfg.hitSound = not cfg.hitSound
+        if cfg.hitSound then
+            PC.btnHitSound.BackgroundColor3 = T.accent
+            PC.btnHitSound.TextColor3 = T.bg
+            PC.btnHitSound.Text = "HIT SOUND: ON"
+            toast("Hit sound ON", T.ok)
+        else
+            PC.btnHitSound.BackgroundColor3 = T.panel2
+            PC.btnHitSound.TextColor3 = T.text
+            PC.btnHitSound.Text = "HIT SOUND: OFF"
+        end
+    end)
+
+    PC.btnAutoMelee.MouseButton1Click:Connect(function()
+        cfg.autoMelee = not cfg.autoMelee
+        if cfg.autoMelee then
+            PC.btnAutoMelee.BackgroundColor3 = T.accent
+            PC.btnAutoMelee.TextColor3 = T.bg
+            PC.btnAutoMelee.Text = "AUTO MELEE: ON"
+            startAutoMelee()
+            toast("Auto melee ON", T.ok)
+        else
+            PC.btnAutoMelee.BackgroundColor3 = T.panel2
+            PC.btnAutoMelee.TextColor3 = T.text
+            PC.btnAutoMelee.Text = "AUTO MELEE: OFF"
+            stopAutoMelee()
+        end
+    end)
+
+    PC.btnFullbright.MouseButton1Click:Connect(function() setFullbright(not cfg.fullbright) end)
+    PC.btnNoclip.MouseButton1Click:Connect(function() setNoclip(not cfg.noclip) end)
+    PC.btnFly.MouseButton1Click:Connect(function() setFly(not cfg.flyEnabled) end)
+    PC.btnAntiAim.MouseButton1Click:Connect(function() setAntiAim(not cfg.antiAim) end)
+    PC.btnRapidFire.MouseButton1Click:Connect(function() setRapidFire(not cfg.rapidFire) end)
+    PC.btnRapidAttack.MouseButton1Click:Connect(function() setRapidAttack(not cfg.rapidAttack) end)
+
+    PC.btnKillFeed.MouseButton1Click:Connect(function()
+        cfg.killFeed = not cfg.killFeed
+        if cfg.killFeed then
+            PC.btnKillFeed.BackgroundColor3 = T.accent
+            PC.btnKillFeed.TextColor3 = T.bg
+            PC.btnKillFeed.Text = "KILL FEED: ON"
+        else
+            PC.btnKillFeed.BackgroundColor3 = T.panel2
+            PC.btnKillFeed.TextColor3 = T.text
+            PC.btnKillFeed.Text = "KILL FEED: OFF"
+        end
+    end)
+
+    PC.btnCombatTimer.MouseButton1Click:Connect(function()
+        cfg.combatTimer = not cfg.combatTimer
+        PC.combatLabel.Visible = cfg.combatTimer
+        if cfg.combatTimer then
+            PC.btnCombatTimer.BackgroundColor3 = T.accent
+            PC.btnCombatTimer.TextColor3 = T.bg
+            PC.btnCombatTimer.Text = "COMBAT TIMER: ON"
+        else
+            PC.btnCombatTimer.BackgroundColor3 = T.panel2
+            PC.btnCombatTimer.TextColor3 = T.text
+            PC.btnCombatTimer.Text = "COMBAT TIMER: OFF"
+        end
+    end)
+
+    PC.btnSuspicious.MouseButton1Click:Connect(function()
+        cfg.suspicious = not cfg.suspicious
+        if cfg.suspicious then
+            PC.btnSuspicious.BackgroundColor3 = T.accent
+            PC.btnSuspicious.TextColor3 = T.bg
+            PC.btnSuspicious.Text = "THREAT DETECTION: ON"
+        else
+            PC.btnSuspicious.BackgroundColor3 = T.panel2
+            PC.btnSuspicious.TextColor3 = T.text
+            PC.btnSuspicious.Text = "THREAT DETECTION: OFF"
+        end
+    end)
+
+    PC.btnVoidTrack.MouseButton1Click:Connect(function()
+        cfg.voidTrack = not cfg.voidTrack
+        if cfg.voidTrack then
+            PC.btnVoidTrack.BackgroundColor3 = T.accent
+            PC.btnVoidTrack.TextColor3 = T.bg
+            PC.btnVoidTrack.Text = "VOID TRACKER: ON"
+        else
+            PC.btnVoidTrack.BackgroundColor3 = T.panel2
+            PC.btnVoidTrack.TextColor3 = T.text
+            PC.btnVoidTrack.Text = "VOID TRACKER: OFF"
+        end
+    end)
+
+    PC.btnNotifications.MouseButton1Click:Connect(function()
+        cfg.notifications = not cfg.notifications
+        if cfg.notifications then
+            PC.btnNotifications.BackgroundColor3 = T.accent
+            PC.btnNotifications.TextColor3 = T.bg
+            PC.btnNotifications.Text = "NOTIFICATIONS: ON"
+        else
+            PC.btnNotifications.BackgroundColor3 = T.panel2
+            PC.btnNotifications.TextColor3 = T.text
+            PC.btnNotifications.Text = "NOTIFICATIONS: OFF"
+        end
+    end)
+
+    PC.btnFps.MouseButton1Click:Connect(function()
+        cfg.fpsOverlay = not cfg.fpsOverlay
+        PC.fpsFrame.Visible = cfg.fpsOverlay
+        PC.combatLabel.Visible = cfg.fpsOverlay and cfg.combatTimer
+        if cfg.fpsOverlay then
+            PC.btnFps.BackgroundColor3 = T.accent
+            PC.btnFps.TextColor3 = T.bg
+            PC.btnFps.Text = "FPS OVERLAY: ON"
+        else
+            PC.btnFps.BackgroundColor3 = T.panel2
+            PC.btnFps.TextColor3 = T.text
+            PC.btnFps.Text = "FPS OVERLAY: OFF"
+        end
+    end)
+end
+
+do
+    local Players = PC.Players
+    local LP = PC.LP
+    local UIS = PC.UIS
+    local RS = PC.RS
+    local Stats = PC.Stats
+    local cfg = PC.cfg
+    local T = PC.T
+    local toast = PC.toast
+
+    local function serializeConfig()
+        local lines = {}
+        local data = {
+            teleDelay = cfg.teleDelay,
+            useAll = cfg.useAll,
+            voidForce = cfg.voidForce,
+            voidInterval = cfg.voidInterval,
+            holdTime = cfg.holdTime,
+            teleKey = cfg.teleKey.Name,
+            voidKey = cfg.voidKey.Name,
+            espColor = cfg.espColor,
+            espEnabled = cfg.espEnabled,
+            hitSound = cfg.hitSound,
+            soundId = cfg.soundId,
+            fullbright = cfg.fullbright,
+            fpsOverlay = cfg.fpsOverlay,
+            noclip = cfg.noclip,
+            autoMelee = cfg.autoMelee,
+            rapidFire = cfg.rapidFire,
+            rapidAttack = cfg.rapidAttack,
+            auraEnabled = cfg.auraEnabled,
+            auraColor = cfg.auraColor,
+            cameraFollow = cfg.cameraFollow,
+            killFeed = cfg.killFeed,
+            combatTimer = cfg.combatTimer,
+            voidTrack = cfg.voidTrack,
+            suspicious = cfg.suspicious,
+            notifications = cfg.notifications,
+            bgEnabled = cfg.bgEnabled,
+            bgOffsetBack = cfg.bgOffsetBack,
+            bgOffsetUp = cfg.bgOffsetUp,
+            bgIgnoreTeam = cfg.bgIgnoreTeam,
+            bgLockCamera = cfg.bgLockCamera,
+            flyEnabled = cfg.flyEnabled,
+            flySpeed = cfg.flySpeed,
+            flyKey = cfg.flyKey.Name,
+            antiAim = cfg.antiAim,
+            antiAimDepth = cfg.antiAimDepth,
+        }
+        for k, v in pairs(data) do
+            table.insert(lines, k .. "=" .. tostring(v))
+        end
+        return table.concat(lines, "\n")
+    end
+
+    local function applyConfigData(str)
+        for line in str:gmatch("[^\n]+") do
+            local k, v = line:match("^([^=]+)=(.+)$")
+            if k and v then
+                if k == "teleKey" then
+                    pcall(function() cfg.teleKey = Enum.KeyCode[v] end)
+                elseif k == "voidKey" then
+                    pcall(function() cfg.voidKey = Enum.KeyCode[v] end)
+                elseif k == "flyKey" then
+                    pcall(function() cfg.flyKey = Enum.KeyCode[v] end)
+                else
+                    if v == "true" then v = true
+                    elseif v == "false" then v = false
+                    else
+                        local n = tonumber(v)
+                        if n then v = n end
+                    end
+                    if cfg[k] ~= nil then cfg[k] = v end
+                end
+            end
+        end
+        PC.btnKeyTele.Text = "TELE: " .. cfg.teleKey.Name
+        PC.btnKeyVoid.Text = "VOID: " .. cfg.voidKey.Name
+        PC.btnKeyFly.Text = "FLY: " .. cfg.flyKey.Name
+        PC.spdFill.Size = UDim2.new((cfg.teleDelay - 0.1) / 1.9, 0, 1, 0)
+        PC.spdVal.Text = string.format("%.1fs", cfg.teleDelay)
+        PC.btnColor.Text = "COLOR: " .. PC.colorNames[cfg.espColor]
+        PC.btnAuraColor.Text = "AURA COLOR: " .. PC.colorNames[cfg.auraColor]
+        PC.refreshColors()
+        PC.setEsp(cfg.espEnabled)
+        if cfg.hitSound then
+            PC.btnHitSound.BackgroundColor3 = T.accent
+            PC.btnHitSound.TextColor3 = T.bg
+            PC.btnHitSound.Text = "HIT SOUND: ON"
+        else
+            PC.btnHitSound.BackgroundColor3 = T.panel2
+            PC.btnHitSound.TextColor3 = T.text
+            PC.btnHitSound.Text = "HIT SOUND: OFF"
+        end
+        if cfg.soundId and cfg.soundId ~= "" then
+            PC.hitSound.SoundId = "rbxassetid://" .. cfg.soundId
+            PC.soundInput.Text = cfg.soundId
+        else
+            PC.hitSound.SoundId = PC.DEFAULT_SOUND
+            PC.soundInput.Text = ""
+        end
+        if cfg.fullbright then PC.setFullbright(true) else PC.setFullbright(false) end
+        if cfg.fpsOverlay then
+            PC.fpsFrame.Visible = true
+            PC.btnFps.BackgroundColor3 = T.accent
+            PC.btnFps.TextColor3 = T.bg
+            PC.btnFps.Text = "FPS OVERLAY: ON"
+        else
+            PC.fpsFrame.Visible = false
+            PC.btnFps.BackgroundColor3 = T.panel2
+            PC.btnFps.TextColor3 = T.text
+            PC.btnFps.Text = "FPS OVERLAY: OFF"
+        end
+        PC.combatLabel.Visible = cfg.fpsOverlay and cfg.combatTimer
+        if cfg.noclip then PC.setNoclip(true) else PC.setNoclip(false) end
+        if cfg.autoMelee then
+            PC.btnAutoMelee.BackgroundColor3 = T.accent
+            PC.btnAutoMelee.TextColor3 = T.bg
+            PC.btnAutoMelee.Text = "AUTO MELEE: ON"
+            PC.startAutoMelee()
+        else
+            PC.btnAutoMelee.BackgroundColor3 = T.panel2
+            PC.btnAutoMelee.TextColor3 = T.text
+            PC.btnAutoMelee.Text = "AUTO MELEE: OFF"
+            PC.stopAutoMelee()
+        end
+        if cfg.rapidFire then
+            PC.btnRapidFire.BackgroundColor3 = T.accent
+            PC.btnRapidFire.TextColor3 = T.bg
+            PC.btnRapidFire.Text = "RAPID FIRE: ON"
+            PC.startRapidFire()
+        else
+            PC.btnRapidFire.BackgroundColor3 = T.panel2
+            PC.btnRapidFire.TextColor3 = T.text
+            PC.btnRapidFire.Text = "RAPID FIRE: OFF"
+        end
+        if cfg.rapidAttack then
+            PC.btnRapidAttack.BackgroundColor3 = T.accent
+            PC.btnRapidAttack.TextColor3 = T.bg
+            PC.btnRapidAttack.Text = "RAPID ATTACK: ON"
+            PC.startRapidAttack()
+        else
+            PC.btnRapidAttack.BackgroundColor3 = T.panel2
+            PC.btnRapidAttack.TextColor3 = T.text
+            PC.btnRapidAttack.Text = "RAPID ATTACK: OFF"
+        end
+        if cfg.auraEnabled then PC.setAura(true) else PC.setAura(false) end
+        if cfg.cameraFollow then PC.setCamFollow(true) else PC.setCamFollow(false) end
+        if cfg.flyEnabled then PC.setFly(true) else PC.setFly(false) end
+        if cfg.antiAim then PC.setAntiAim(true) else PC.setAntiAim(false) end
+        PC.btnKillFeed.Text = cfg.killFeed and "KILL FEED: ON" or "KILL FEED: OFF"
+        PC.btnKillFeed.BackgroundColor3 = cfg.killFeed and T.accent or T.panel2
+        PC.btnKillFeed.TextColor3 = cfg.killFeed and T.bg or T.text
+        PC.btnCombatTimer.Text = cfg.combatTimer and "COMBAT TIMER: ON" or "COMBAT TIMER: OFF"
+        PC.btnCombatTimer.BackgroundColor3 = cfg.combatTimer and T.accent or T.panel2
+        PC.btnCombatTimer.TextColor3 = cfg.combatTimer and T.bg or T.text
+        PC.btnSuspicious.Text = cfg.suspicious and "THREAT DETECTION: ON" or "THREAT DETECTION: OFF"
+        PC.btnSuspicious.BackgroundColor3 = cfg.suspicious and T.accent or T.panel2
+        PC.btnSuspicious.TextColor3 = cfg.suspicious and T.bg or T.text
+        PC.btnVoidTrack.Text = cfg.voidTrack and "VOID TRACKER: ON" or "VOID TRACKER: OFF"
+        PC.btnVoidTrack.BackgroundColor3 = cfg.voidTrack and T.accent or T.panel2
+        PC.btnVoidTrack.TextColor3 = cfg.voidTrack and T.bg or T.text
+        PC.btnNotifications.Text = cfg.notifications and "NOTIFICATIONS: ON" or "NOTIFICATIONS: OFF"
+        PC.btnNotifications.BackgroundColor3 = cfg.notifications and T.accent or T.panel2
+        PC.btnNotifications.TextColor3 = cfg.notifications and T.bg or T.text
+        PC.btnBg.Text = cfg.bgEnabled and "BACKGLUE: ON" or "BACKGLUE: OFF"
+        PC.btnBg.BackgroundColor3 = cfg.bgEnabled and T.accent or T.panel2
+        PC.btnBg.TextColor3 = cfg.bgEnabled and T.bg or T.text
+        PC.btnBgCam.Text = cfg.bgLockCamera and "GLUE LOCK CAMERA: ON" or "GLUE LOCK CAMERA: OFF"
+        PC.btnBgCam.BackgroundColor3 = cfg.bgLockCamera and T.accent or T.panel2
+        PC.btnBgCam.TextColor3 = cfg.bgLockCamera and T.bg or T.text
+        PC.btnBgTeam.Text = cfg.bgIgnoreTeam and "GLUE IGNORE TEAM: ON" or "GLUE IGNORE TEAM: OFF"
+        PC.btnBgTeam.BackgroundColor3 = cfg.bgIgnoreTeam and T.accent or T.panel2
+        PC.btnBgTeam.TextColor3 = cfg.bgIgnoreTeam and T.bg or T.text
+    end
+    PC.applyConfigData = applyConfigData
+
+    local function flashBtn(btn, temp)
+        local original = btn.Text
+        btn.Text = temp
+        task.wait(1)
+        btn.Text = original
+    end
+
+    PC.btnCfgSave.MouseButton1Click:Connect(function()
+        if not writefile or not isfolder or not makefolder then
+            flashBtn(PC.btnCfgSave, "NO API")
+            return
+        end
+        local name = PC.configInput.Text:gsub("[^%w_%-]", "")
+        if name == "" then
+            flashBtn(PC.btnCfgSave, "NAME IT")
+            return
+        end
+        if not isfolder(PC.CONFIG_DIR) then
+            pcall(function() makefolder(PC.CONFIG_DIR) end)
+        end
+        local ok = pcall(function() writefile(PC.CONFIG_DIR .. "/" .. name .. ".txt", serializeConfig()) end)
+        if ok then
+            flashBtn(PC.btnCfgSave, "SAVED!")
+            toast("Saved: " .. name, T.ok)
+            PC.refreshConfigList()
+        else
+            flashBtn(PC.btnCfgSave, "FAILED")
+        end
+    end)
+
+    PC.btnCfgLoad.MouseButton1Click:Connect(function()
+        if not readfile or not isfile then
+            flashBtn(PC.btnCfgLoad, "NO API")
+            return
+        end
+        if cfg.activeConfig == "" then
+            flashBtn(PC.btnCfgLoad, "PICK ONE")
+            return
+        end
+        local path = PC.CONFIG_DIR .. "/" .. cfg.activeConfig .. ".txt"
+        if not isfile(path) then
+            flashBtn(PC.btnCfgLoad, "NO FILE")
+            return
+        end
+        local ok, data = pcall(function() return readfile(path) end)
+        if ok and data then
+            applyConfigData(data)
+            flashBtn(PC.btnCfgLoad, "LOADED!")
+            toast("Loaded: " .. cfg.activeConfig, T.ok)
+        else
+            flashBtn(PC.btnCfgLoad, "FAILED")
+        end
+    end)
+
+    PC.btnCfgRefresh.MouseButton1Click:Connect(function()
+        PC.refreshConfigList()
+        flashBtn(PC.btnCfgRefresh, "DONE")
+    end)
+
+    PC.btnCfgAuto.MouseButton1Click:Connect(function()
+        cfg.autoLoad = not cfg.autoLoad
+        if cfg.autoLoad then
+            PC.btnCfgAuto.BackgroundColor3 = T.accent
+            PC.btnCfgAuto.TextColor3 = T.bg
+            PC.btnCfgAuto.Text = "AUTO: ON"
+            if writefile then
+                local target = cfg.activeConfig ~= "" and cfg.activeConfig or "none"
+                pcall(function() writefile(PC.AUTOLOAD_MARKER, target) end)
+            end
+            toast("Auto load ON", T.ok)
+        else
+            PC.btnCfgAuto.BackgroundColor3 = T.panel2
+            PC.btnCfgAuto.TextColor3 = T.text
+            PC.btnCfgAuto.Text = "AUTO: OFF"
+            if writefile then
+                pcall(function() writefile(PC.AUTOLOAD_MARKER, "none") end)
+            end
+        end
+    end)
+
+    local function tryAutoLoad()
+        if not readfile or not isfile then return end
+        if not isfile(PC.AUTOLOAD_MARKER) then return end
+        local ok, target = pcall(function() return readfile(PC.AUTOLOAD_MARKER) end)
+        if not ok or not target or target == "" or target == "none" then return end
+        local path = PC.CONFIG_DIR .. "/" .. target .. ".txt"
+        if not isfile(path) then return end
+        local ok2, data = pcall(function() return readfile(path) end)
+        if ok2 and data then
+            applyConfigData(data)
+            cfg.autoLoad = true
+            PC.btnCfgAuto.BackgroundColor3 = T.accent
+            PC.btnCfgAuto.TextColor3 = T.bg
+            PC.btnCfgAuto.Text = "AUTO: ON"
+            toast("Autoloaded: " .. target, T.ok)
+        end
+    end
+
+    task.spawn(tryAutoLoad)
+    PC.refreshConfigList()
+
+    PC.btnEnable.MouseButton1Click:Connect(function() PC.setTele(not cfg.teleEnabled) end)
+    PC.btnVoid.MouseButton1Click:Connect(function() PC.setVoid(not cfg.voidEnabled) end)
+
+    PC.btnAll.MouseButton1Click:Connect(function()
+        cfg.useAll = true
+        cfg.selected = nil
+        PC.btnAll.BackgroundColor3 = T.accent
+        PC.btnAll.TextColor3 = T.bg
+        PC.btnSel.BackgroundColor3 = T.panel2
+        PC.btnSel.TextColor3 = T.text
+        PC.btnSel.Text = "SELECT"
+        PC.refreshList()
+    end)
+
+    PC.btnSel.MouseButton1Click:Connect(function()
+        cfg.useAll = false
+        PC.btnAll.BackgroundColor3 = T.panel2
+        PC.btnAll.TextColor3 = T.text
+        PC.btnSel.BackgroundColor3 = T.accent
+        PC.btnSel.TextColor3 = T.bg
+        if cfg.selected then
+            PC.btnSel.Text = cfg.selected.Name:sub(1, 10)
+        else
+            PC.btnSel.Text = "PICK"
+        end
+    end)
+
+    PC.btnCycle.MouseButton1Click:Connect(function()
+        PC.refreshPlayers()
+        if #PC.players == 0 then return end
+        PC.playerIndex = PC.playerIndex % #PC.players + 1
+        local p = PC.players[PC.playerIndex]
+        if p then
+            PC.teleportTo(p)
+            PC.statTgt.Text = "-> " .. p.Name
+        end
+    end)
+
+    PC.btnBg.MouseButton1Click:Connect(function()
+        cfg.bgEnabled = not cfg.bgEnabled
+        if cfg.bgEnabled then
+            PC.btnBg.BackgroundColor3 = T.accent
+            PC.btnBg.TextColor3 = T.bg
+            PC.btnBg.Text = "BACKGLUE: ON"
+            PC.bgStart()
+            toast("BackGlue ON", T.ok)
+        else
+            PC.btnBg.BackgroundColor3 = T.panel2
+            PC.btnBg.TextColor3 = T.text
+            PC.btnBg.Text = "BACKGLUE: OFF"
+            PC.bgStop()
+            toast("BackGlue OFF", T.warn)
+        end
+    end)
+
+    PC.btnBgCam.MouseButton1Click:Connect(function()
+        cfg.bgLockCamera = not cfg.bgLockCamera
+        if cfg.bgLockCamera then
+            PC.btnBgCam.BackgroundColor3 = T.accent
+            PC.btnBgCam.TextColor3 = T.bg
+            PC.btnBgCam.Text = "GLUE LOCK CAMERA: ON"
+        else
+            PC.btnBgCam.BackgroundColor3 = T.panel2
+            PC.btnBgCam.TextColor3 = T.text
+            PC.btnBgCam.Text = "GLUE LOCK CAMERA: OFF"
+        end
+    end)
+
+    PC.btnBgTeam.MouseButton1Click:Connect(function()
+        cfg.bgIgnoreTeam = not cfg.bgIgnoreTeam
+        if cfg.bgIgnoreTeam then
+            PC.btnBgTeam.BackgroundColor3 = T.accent
+            PC.btnBgTeam.TextColor3 = T.bg
+            PC.btnBgTeam.Text = "GLUE IGNORE TEAM: ON"
+        else
+            PC.btnBgTeam.BackgroundColor3 = T.panel2
+            PC.btnBgTeam.TextColor3 = T.text
+            PC.btnBgTeam.Text = "GLUE IGNORE TEAM: OFF"
+        end
+    end)
+
+    PC.orb.MouseButton1Click:Connect(function()
+        PC.win.Visible = not PC.win.Visible
+    end)
+
+    PC.cls.MouseButton1Click:Connect(function()
+        PC.win.Visible = false
+    end)
+
+    UIS.InputBegan:Connect(function(input, gp)
+        if gp then return end
+        if PC.awaitingBind == "tele" then
+            cfg.teleKey = input.KeyCode
+            PC.btnKeyTele.Text = "TELE: " .. input.KeyCode.Name
+            PC.awaitingBind = nil
+            return
+        end
+        if PC.awaitingBind == "void" then
+            cfg.voidKey = input.KeyCode
+            PC.btnKeyVoid.Text = "VOID: " .. input.KeyCode.Name
+            PC.awaitingBind = nil
+            return
+        end
+        if PC.awaitingBind == "fly" then
+            cfg.flyKey = input.KeyCode
+            PC.btnKeyFly.Text = "FLY: " .. input.KeyCode.Name
+            PC.awaitingBind = nil
+            return
+        end
+        if input.KeyCode == cfg.teleKey then
+            PC.setTele(not cfg.teleEnabled)
+        elseif input.KeyCode == cfg.voidKey then
+            PC.setVoid(not cfg.voidEnabled)
+        elseif input.KeyCode == cfg.flyKey then
+            PC.setFly(not cfg.flyEnabled)
+        end
+    end)
+
+    PC.btnKeyTele.MouseButton1Click:Connect(function()
+        PC.awaitingBind = "tele"
+        PC.btnKeyTele.Text = "PRESS..."
+    end)
+
+    PC.btnKeyVoid.MouseButton1Click:Connect(function()
+        PC.awaitingBind = "void"
+        PC.btnKeyVoid.Text = "PRESS..."
+    end)
+
+    PC.btnKeyFly.MouseButton1Click:Connect(function()
+        PC.awaitingBind = "fly"
+        PC.btnKeyFly.Text = "PRESS..."
+    end)
+
+    Players.PlayerAdded:Connect(function(p)
+        PC.refreshList()
+        if cfg.espEnabled and p ~= LP then
+            p.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if cfg.espEnabled then PC.applyHighlight(p) end
+            end)
+        end
+    end)
+
+    Players.PlayerRemoving:Connect(function(p)
+        PC.clearHighlight(p)
+        PC.lastSeen[p] = nil
+        PC.lastVel[p] = nil
+        PC.refreshList()
+    end)
+
+    LP.CharacterAdded:Connect(function()
+        PC.bgLockedTarget = nil
+        PC.antiAimOrigin = nil
+        task.wait(0.5)
+        if cfg.noclip then PC.setNoclip(true) end
+        if cfg.rapidAttack then
+            local c = LP.Character
+            if c then
+                for _, t in ipairs(c:GetChildren()) do
+                    if t:IsA("Tool") then PC.hookToolRapidAttack(t) end
+                end
+            end
+        end
+        if cfg.flyEnabled then
+            task.wait(0.2)
+            PC.startFly()
+        end
+    end)
+
+    local function setupChar(char)
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("Tool") then
+                if PC.isMelee(child) then
+                    PC.hookToolRapidAttack(child)
+                    child.Activated:Connect(function()
+                        if not cfg.hitSound then return end
+                        local before = {}
+                        for _, p in ipairs(Players:GetPlayers()) do
+                            if p ~= LP then
+                                local pc = p.Character
+                                if pc then
+                                    local h = pc:FindFirstChildOfClass("Humanoid")
+                                    if h then before[p] = h.Health end
+                                end
+                            end
+                        end
+                        task.wait(0.08)
+                        for p, hp in pairs(before) do
+                            local pc = p.Character
+                            if pc then
+                                local h = pc:FindFirstChildOfClass("Humanoid")
+                                if h and h.Health < hp then
+                                    PC.hitSound:Play()
+                                    return
+                                end
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+        char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then setupChar(char) end
+        end)
+    end
+
+    if LP.Character then setupChar(LP.Character) end
+    LP.CharacterAdded:Connect(setupChar)
+
+    spawn(function()
+        while true do
+            local dt = task.wait(0.5)
+            if cfg.teleEnabled then
+                if cfg.useAll then
+                    if tick() - PC.lastCycle >= cfg.teleDelay then
+                        PC.lastCycle = tick()
+                        PC.refreshPlayers()
+                        if #PC.players > 0 then
+                            PC.playerIndex = PC.playerIndex % #PC.players + 1
+                            local p = PC.players[PC.playerIndex]
+                            if p then
+                                PC.teleportTo(p)
+                                PC.statTgt.Text = "-> " .. p.Name
+                            end
+                        end
+                    end
+                elseif cfg.selected and cfg.selected.Parent then
+                    if tick() - PC.lastTele >= cfg.teleDelay then
+                        PC.lastTele = tick()
+                        if PC.teleportTo(cfg.selected) then
+                            PC.statTgt.Text = "-> " .. cfg.selected.Name
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        local fps = 0
+        local frames = 0
+        local last = tick()
+        while true do
+            local dt = task.wait(1)
+            frames = frames + 1
+            if tick() - last >= 1 then
+                fps = frames
+                frames = 0
+                last = tick()
+                PC.fpsText.Text = "FPS: " .. fps
+                local ok, ping = pcall(function()
+                    return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+                end)
+                if ok and ping then
+                    PC.pingText.Text = "PING: " .. math.floor(ping) .. "ms"
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(0.1)
+            PC.rainbowHue = (PC.rainbowHue + 0.01) % 1
+            if cfg.espEnabled and cfg.espColor == PC.RAINBOW_IDX then
+                PC.refreshColors()
+            end
+            if cfg.auraEnabled and cfg.auraColor == PC.RAINBOW_IDX then
+                local col = PC.curAuraColor()
+                if PC.auraHighlight then
+                    PC.auraHighlight.FillColor = col
+                    PC.auraHighlight.OutlineColor = col
+                end
+                if PC.auraLight then PC.auraLight.Color = col end
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(0.25)
+            if cfg.fpsOverlay and cfg.combatTimer then
+                if PC.inCombat then
+                    local t = tick() - PC.combatStart
+                    PC.combatLabel.Text = string.format("FIGHT: %.1fs", t)
+                    PC.combatLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+                    if t > 8 then
+                        PC.inCombat = false
+                    end
+                else
+                    PC.combatLabel.Text = "FIGHT: --"
+                    PC.combatLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(1)
+            if cfg.voidTrack and cfg.suspicious then
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LP and PC.isSuspicious(p) then
+                        if tick() - PC.lastThreatToast > 3 then
+                            PC.lastThreatToast = tick()
+                            toast("Threat: " .. p.Name, T.warn)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(0.5)
+            local c = LP.Character
+            if c then
+                local h = c:FindFirstChildOfClass("Humanoid")
+                if h then
+                    local hp = h.Health
+                    if hp < PC.lastDamage then
+                        PC.inCombat = true
+                        PC.combatStart = tick()
+                    end
+                    PC.lastDamage = hp
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        local lastPos = {}
+        while true do
+            task.wait(0.05)
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LP then
+                    local c = p.Character
+                    local hrp = c and c:FindFirstChild("HumanoidRootPart")
+                    if hrp then
+                        local prev = lastPos[p]
+                        if prev and (hrp.Position - prev).Magnitude > 150 then
+                            if cfg.suspicious then
+                                PC.lastSeen[p] = hrp.Position
+                            end
+                        end
+                        lastPos[p] = hrp.Position
+                    end
+                end
+            end
+        end
+    end)
+
+    spawn(function()
+        while true do
+            task.wait(0.5)
+            if cfg.cameraFollow then
+                local target = PC.camFollowTarget
+                if not target or not target.Parent then
+                    PC.camFollowTarget = PC.getCamNearestPlayer()
+                    target = PC.camFollowTarget
+                end
+                if target then
+                    local tc = target.Character
+                    local th = tc and tc:FindFirstChild("Head")
+                    if th then
+                        local cam = workspace.CurrentCamera
+                        cam.CameraType = Enum.CameraType.Scriptable
+                        local look = CFrame.new(cam.CFrame.Position, th.Position)
+                        cam.CFrame = cam.CFrame:Lerp(look, 0.15)
+                        local myHum = LP.Character and LP.Character:FindFirstChildOfClass("Humanoid")
+                        if myHum then
+                            myHum.AutoRotate = false
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    toast("PHANTOMCORE loaded", T.ok)
+end
